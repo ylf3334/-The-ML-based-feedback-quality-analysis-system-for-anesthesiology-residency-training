@@ -1,0 +1,2500 @@
+import pandas as pd
+import numpy as np
+import jieba
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, classification_report
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import pickle
+import os
+import warnings
+import datetime
+from scipy import stats
+from scipy.stats import ttest_ind, chi2_contingency, mannwhitneyu
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+import io
+import matplotlib
+matplotlib.use('Agg')  # 使用非交互式后端，避免tkinter冲突
+
+warnings.filterwarnings('ignore')
+
+class 麻醉反馈质量分析系统:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("麻醉科住培反馈质量评价系统")
+        self.root.geometry("1200x800")
+        
+        # 初始化语言设置（默认为中文）
+        self.当前语言 = "中文"
+        self.语言字典 = self.创建语言字典()
+        
+        # 初始化模型和变量
+        self.质量模型 = None
+        self.向量化器 = None
+        self.标准化器 = None
+        self.预处理数据 = None
+        self.专业词库文件 = "麻醉专业词库.txt"
+        self.停用词列表 = self.获取停用词列表()
+        self.训练性能结果 = None
+        self.最佳阈值 = 0.5  # 默认阈值
+        self.初始化专业词库()
+        
+        # 医院对比数据
+        self.医院对比结果 = None
+        
+        # 定义高质量反馈的6个特征 - 修改特征4
+        self.高质量特征关键词 = {
+            "以住培医师行为为中心的": ["行为", "操作", "表现", "动作", "医师", "医生", "学员", "住院医师"],
+            "提供详细信息的": ["详细", "具体", "明确", "清晰", "描述", "记录", "记载", "说明"], 
+            "负面反馈": ["不足", "改进", "错误", "问题", "缺点", "欠缺", "需要提高", "不够", "未", "缺乏", "差", "不好"],
+            "评价专业性和/或沟通能力的": ["专业", "沟通", "交流", "解释", "告知", "说明", "计划", "准备", "能力", "技能", "专业性", "沟通能力"],
+            "有针对性的": ["针对", "特定", "具体", "相关", "对应", "针对性地", "专门", "特别"],
+            "指出可改进的": ["改进", "提高", "加强", "完善", "优化", "建议", "应该", "需要", "要", "可以", "改进方向"]
+        }
+        
+        # 可能的列名变体 - 修改特征4
+        self.可能特征列名 = {
+            "以住培医师行为为中心的": ["以住培医师行为为中心的", "行为中心", "医师行为", "行为反馈"],
+            "提供详细信息的": ["提供详细信息的", "详细信息", "详细描述", "具体信息"], 
+            "负面反馈": ["负面反馈", "负面评价", "指出问题", "缺点反馈"],
+            "评价专业性和/或沟通能力的": ["评价专业性和/或沟通能力的", "评价专业性和沟通能力的", "专业沟通", "专业能力", "沟通能力"],
+            "有针对性的": ["有针对性的", "针对性", "具体针对", "目标明确"],
+            "指出可改进的": ["指出可改进的", "改进建议", "改进方向", "提高建议"]
+        }
+        
+        # 创建界面
+        self.创建界面()
+    
+    def 创建语言字典(self):
+        """创建中英文对照字典"""
+        语言字典 = {
+            "中文": {
+                "系统标题": "麻醉科住培反馈质量评价系统",
+                "数据预处理": "数据预处理",
+                "训练测试数据": "训练测试数据",
+                "保存模型": "保存模型",
+                "加载模型": "加载模型",
+                "测试新数据": "测试新数据",
+                "添加专业词汇": "添加专业词汇",
+                "特征说明": "特征说明",
+                "语言选择": "语言选择:",
+                "中文": "中文",
+                "英文": "英文",
+                "分类阈值调整": "分类阈值调整",
+                "质量阈值": "质量阈值:",
+                "建议使用自动找到的最佳阈值": "Recommended: use automatically found optimal threshold",
+                "模型状态": "模型状态",
+                "未训练": "未训练",
+                "模型性能比较": "模型性能比较",
+                "详细分析结果": "详细分析结果",
+                "算法": "算法",
+                "测试准确率": "测试准确率",
+                "交叉验证准确率": "交叉验证准确率",
+                "精确率": "精确率",
+                "召回率": "召回率",
+                "最佳阈值": "最佳阈值",
+                "序号": "序号",
+                "反馈文本": "反馈文本",
+                "质量预测": "质量预测",
+                "质量概率": "质量概率",
+                "准备就绪": "准备就绪",
+                "高质量": "高质量",
+                "低质量": "低质量",
+                "低质量（空白反馈）": "低质量（空白反馈）",
+                "高质量反馈特征说明": "高质量反馈特征说明",
+                "特征1标题": "1. 以住培医师行为为中心的",
+                "特征1内容": "评价住培医师某一特定行为（非人格或特质）\n示例：评价'操作流程'而不是评价'这个人'",
+                "特征2标题": "2. 提供详细信息的",
+                "特征2内容": "提供信息，描述观察到的情况或发生的行为（无论长短）\n示例：具体描述操作步骤或观察到的情况",
+                "特征3标题": "3. 负面反馈",
+                "特征3内容": "指出住培医师的缺点或错误\n示例：指出操作中的不足或错误之处",
+                "特征4标题": "4. 评价专业性和/或沟通能力的",
+                "特征4内容": "评价住培医师是否有专业性的计划、准备和沟通能力\n示例：评价术前准备、沟通解释能力等",
+                "特征5标题": "5. 有针对性的",
+                "特征5内容": "直接指出与住培医师具体行为相关的具体信息\n示例：针对特定操作环节给出反馈",
+                "特征6标题": "6. 指出可改进的",
+                "特征6内容": "指出住培医师需要努力改进的具体领域\n示例：明确说明需要改进的具体方面",
+                "质量评价标准": "质量评价标准:",
+                "标准内容": "在6个特征中，有≥4个特征存在被认为是高质量反馈",
+                "示例分析": "示例分析:",
+                "示例文本": "对于纤支镜引导下双腔气管插管术流程清楚，术前评估到位，严格无菌操作，操作过程流畅，操作完成后评估准确",
+                "示例特征": "体现特征：以行为为中心、提供详细信息、评价专业性、有针对性的",
+                "示例质量": "质量：4个特征 → 高质量",
+                "添加麻醉专业词汇": "添加麻醉专业词汇",
+                "输入词汇提示": "输入要添加的专业词汇（每行一个）:",
+                "成功": "成功",
+                "失败": "失败",
+                "警告": "警告",
+                "错误": "错误",
+                "医院对比": "医院间差异分析结果",
+                "特征": "特征",
+                "A医院": "A医院（训练）",
+                "B医院": "B医院（测试）",
+                "P值": "P值",
+                "统计显著性说明": "统计显著性说明:",
+                "统计说明1": "• P值 < 0.05：差异有统计学意义（显著差异）",
+                "统计说明2": "• P值 < 0.01：差异有高度统计学意义",
+                "统计说明3": "• P值 ≥ 0.05：差异无统计学意义",
+                "统计说明4": "注：当P值为'N/A'时，表示无法计算该特征的显著性（如缺少相应数据）",
+                "模型稳定性良好": "✓ 模型稳定性良好",
+                "过拟合风险警告": "⚠️ 警告：可能存在过拟合风险！",
+                "选择文件": "选择文件",
+                "选择训练数据Excel文件": "选择训练数据Excel文件",
+                "选择要测试的Excel文件": "选择要测试的Excel文件",
+                "请先进行数据预处理": "请先进行数据预处理",
+                "请先训练或加载模型": "请先训练或加载模型",
+                "数据预处理完成": "数据预处理完成！空白反馈: {}个，有效文本: {}个",
+                "模型训练完成": "模型训练完成！最佳模型: {} | 最佳阈值: {:.2f} | {}",
+                "测试完成": "测试完成！高质量: {:.1f}% | 空白反馈: {}个",
+                "空白反馈": "空白反馈: {}条 (已单独处理，标记为低质量)",
+                "正在预处理文本": "正在预处理文本...",
+                "正在计算质量标签": "正在计算非空白数据的质量标签...",
+                "正在提取特征": "正在提取非空白数据的特征...",
+                "正在训练模型": "训练{}模型...",
+                "正在测试数据": "正在测试数据...",
+                "正在计算医院间差异": "正在计算医院间差异...",
+                "保存成功": "保存成功！",
+                "加载成功": "加载成功！",
+                "没有训练好的模型": "没有训练好的模型可保存",
+                "保存失败": "保存失败",
+                "加载失败": "加载失败",
+                "Excel文件必须包含反馈文本列": "Excel文件中必须包含'反馈文本'列",
+                "数据中未找到完整的高质量特征列": "数据中未找到完整的高质量特征列。\n\n找到的特征列: {}\n\n缺失的特征: {}\n\n请确保数据包含这些特征的标注（0/1表示不存在/存在）",
+                "所有反馈文本都是空白文本": "所有反馈文本都是空白文本",
+                "有效文本数量不足": "有效文本数量不足: {}，至少需要10个有效文本",
+                "数据预处理过程中出错": "数据预处理过程中出错: {}",
+                "数据预处理失败": "数据预处理失败",
+                "所有模型训练失败": "所有模型训练失败，请检查数据质量",
+                "训练过程中出错": "训练过程中出错: {}",
+                "训练失败": "训练失败",
+                "测试过程中出错": "测试过程中出错: {}",
+                "测试失败": "测试失败",
+                "样本数量较少警告": "样本数量较少({})，可能导致模型不稳定",
+                "目标变量缺乏多样性": "目标变量缺乏多样性，只有{}类",
+                "特征提取失败": "特征提取失败，无法生成有效特征",
+                "成功添加词汇": "成功添加 {} 个专业词汇",
+                "添加词汇失败": "添加词汇失败",
+                "请输入要添加的词汇": "请输入要添加的词汇",
+                "质量阈值标签": "质量阈值:",
+                "算法列标题": "算法",
+                "序号列标题": "序号",
+                "模型稳定性良好标签": "✓ 模型稳定性良好",
+            },
+            "英文": {
+                "系统标题": "Anesthesia Resident Feedback Quality Evaluation System",
+                "数据预处理": "Data Preprocessing",
+                "训练测试数据": "Train/Test Data",
+                "保存模型": "Save Model",
+                "加载模型": "Load Model",
+                "测试新数据": "Test New Data",
+                "添加专业词汇": "Add Professional Vocabulary",
+                "特征说明": "Feature Description",
+                "语言选择": "Language:",
+                "中文": "Chinese",
+                "英文": "English",
+                "分类阈值调整": "Classification Threshold Adjustment",
+                "质量阈值": "Quality Threshold:",
+                "建议使用自动找到的最佳阈值": "Recommended: use automatically found optimal threshold",
+                "模型状态": "Model Status",
+                "未训练": "Not Trained",
+                "模型性能比较": "Model Performance Comparison",
+                "详细分析结果": "Detailed Analysis Results",
+                "算法": "Algorithm",
+                "测试准确率": "Test Accuracy",
+                "交叉验证准确率": "Cross-Validation Accuracy",
+                "精确率": "Precision",
+                "召回率": "Recall",
+                "最佳阈值": "Best Threshold",
+                "序号": "No.",
+                "反馈文本": "Feedback Text",
+                "质量预测": "Quality Prediction",
+                "质量概率": "Quality Probability",
+                "准备就绪": "Ready",
+                "高质量": "High Quality",
+                "低质量": "Low Quality",
+                "低质量（空白反馈）": "Low Quality (Blank Feedback)",
+                "高质量反馈特征说明": "High-Quality Feedback Feature Description",
+                "特征1标题": "1. Behavior-focused",
+                "特征1内容": "Evaluate specific behaviors of resident physicians (not personality or traits)\nExample: Evaluate 'operation procedure' rather than 'the person'",
+                "特征2标题": "2. Provides detailed information",
+                "特征2内容": "Provide information describing observed situations or behaviors (regardless of length)\nExample: Specifically describe operation steps or observed situations",
+                "特征3标题": "3. Negative feedback",
+                "特征3内容": "Point out deficiencies or errors of resident physicians\nExample: Point out shortcomings or errors in operations",
+                "特征4标题": "4. Evaluates professionalism and/or communication skills",
+                "特征4内容": "Evaluate whether resident physicians have professional planning, preparation, and communication skills\nExample: Evaluate preoperative preparation, communication and explanation skills",
+                "特征5标题": "5. Targeted",
+                "特征5内容": "Directly point out specific information related to specific behaviors of resident physicians\nExample: Provide feedback for specific operation steps",
+                "特征6标题": "6. Points out areas for improvement",
+                "特征6内容": "Point out specific areas where resident physicians need to improve\nExample: Clearly specify specific aspects that need improvement",
+                "质量评价标准": "Quality Evaluation Standard:",
+                "标准内容": "Among 6 features, ≥4 features present are considered high-quality feedback",
+                "示例分析": "Example Analysis:",
+                "示例文本": "For fiberoptic bronchoscopy-guided double-lumen endotracheal intubation, the procedure is clear, preoperative assessment is thorough, strict aseptic operation, smooth operation process, and accurate post-operation evaluation",
+                "示例特征": "Features demonstrated: Behavior-focused, provides detailed information, evaluates professionalism, targeted",
+                "示例质量": "Quality: 4 features → High Quality",
+                "添加麻醉专业词汇": "Add Anesthesia Professional Vocabulary",
+                "输入词汇提示": "Enter professional vocabulary to add (one per line):",
+                "成功": "Success",
+                "失败": "Failed",
+                "警告": "Warning",
+                "错误": "Error",
+                "医院对比": "Hospital Comparison Analysis Results",
+                "特征": "Feature",
+                "A医院": "Hospital A (Training)",
+                "B医院": "Hospital B (Testing)",
+                "P值": "P-value",
+                "统计显著性说明": "Statistical Significance Explanation:",
+                "统计说明1": "• P-value < 0.05: Statistically significant difference",
+                "统计说明2": "• P-value < 0.01: Highly statistically significant difference",
+                "统计说明3": "• P-value ≥ 0.05: No statistically significant difference",
+                "统计说明4": "Note: When P-value is 'N/A', it means significance cannot be calculated for this feature (e.g., lack of relevant data)",
+                "模型稳定性良好": "✓ Good model stability",
+                "过拟合风险警告": "⚠️ Warning: Possible overfitting risk!",
+                "选择文件": "Select File",
+                "选择训练数据Excel文件": "Select Training Data Excel File",
+                "选择要测试的Excel文件": "Select Excel File to Test",
+                "请先进行数据预处理": "Please perform data preprocessing first",
+                "请先训练或加载模型": "Please train or load model first",
+                "数据预处理完成": "Data preprocessing completed! Blank feedback: {} items, Valid text: {} items",
+                "模型训练完成": "Model training completed! Best model: {} | Best threshold: {:.2f} | {}",
+                "测试完成": "Testing completed! High quality: {:.1f}% | Blank feedback: {} items",
+                "空白反馈": "Blank feedback: {} items (separately processed, marked as low quality)",
+                "正在预处理文本": "Preprocessing text...",
+                "正在计算质量标签": "Calculating quality labels for non-blank data...",
+                "正在提取特征": "Extracting features from non-blank data...",
+                "正在训练模型": "Training {} model...",
+                "正在测试数据": "Testing data...",
+                "正在计算医院间差异": "Calculating inter-hospital differences...",
+                "保存成功": "Save successful!",
+                "加载成功": "Load successful!",
+                "没有训练好的模型": "No trained model available for saving",
+                "保存失败": "Save failed",
+                "加载失败": "Load failed",
+                "Excel文件必须包含反馈文本列": "Excel file must contain 'Feedback Text' column",
+                "数据中未找到完整的高质量特征列": "Complete high-quality feature columns not found in data.\n\nFound feature columns: {}\n\nMissing features: {}\n\nPlease ensure data contains annotations for these features (0/1 indicating absence/presence)",
+                "所有反馈文本都是空白文本": "All feedback texts are blank",
+                "有效文本数量不足": "Insufficient valid text: {}, minimum 10 valid texts required",
+                "数据预处理过程中出错": "Error during data preprocessing: {}",
+                "数据预处理失败": "Data preprocessing failed",
+                "所有模型训练失败": "All model training failed, please check data quality",
+                "训练过程中出错": "Error during training: {}",
+                "训练失败": "Training failed",
+                "测试过程中出错": "Error during testing: {}",
+                "测试失败": "Testing failed",
+                "样本数量较少警告": "Small sample size ({}) may lead to unstable model",
+                "目标变量缺乏多样性": "Target variable lacks diversity, only has {} classes",
+                "特征提取失败": "Feature extraction failed, cannot generate valid features",
+                "成功添加词汇": "Successfully added {} professional vocabulary items",
+                "添加词汇失败": "Failed to add vocabulary",
+                "请输入要添加的词汇": "Please enter vocabulary to add",
+                "质量阈值标签": "Quality Threshold:",
+                "算法列标题": "Algorithm",
+                "序号列标题": "No.",
+                "模型稳定性良好标签": "✓ Good model stability",
+            }
+        }
+        return 语言字典
+    
+    def 切换语言(self, 语言):
+        """切换界面语言"""
+        self.当前语言 = 语言
+        self.更新界面语言()
+    
+    def 获取文本(self, 键):
+        """获取当前语言下的文本"""
+        return self.语言字典[self.当前语言].get(键, 键)
+    
+    def 更新界面语言(self):
+        """更新界面显示语言"""
+        # 更新窗口标题
+        self.root.title(self.获取文本("系统标题"))
+        
+        # 更新所有按钮和标签文本
+        self.更新所有界面文本()
+        
+        # 更新标签文本
+        self.进度标签.config(text=self.获取文本("准备就绪"))
+        self.稳定性标签.config(text=self.获取文本("未训练"))
+        
+        # 更新阈值标签
+        self.质量阈值标签.config(text=self.获取文本("质量阈值"))
+        
+        # 更新表格列标题
+        self.更新表格列标题()
+        
+        # 更新状态标签
+        if hasattr(self, '过拟合标签'):
+            current_text = self.过拟合标签.cget("text")
+            if current_text == "✓ 模型稳定性良好":
+                self.过拟合标签.config(text=self.获取文本("模型稳定性良好标签"))
+            elif current_text == "⚠️ 警告：可能存在过拟合风险！":
+                self.过拟合标签.config(text=self.获取文本("过拟合风险警告"))
+    
+    def 更新表格列标题(self):
+        """更新表格的列标题"""
+        # 更新训练结果表格
+        if hasattr(self, '结果树'):
+            columns = (self.获取文本("算法"), "AUC", self.获取文本("测试准确率"), 
+                      self.获取文本("交叉验证准确率"), self.获取文本("精确率"), 
+                      self.获取文本("召回率"), "F1分数", self.获取文本("最佳阈值"))
+            
+            for i, col in enumerate(columns):
+                self.结果树.heading(f'#{i+1}', text=col)
+        
+        # 更新分析结果表格
+        if hasattr(self, '分析结果树'):
+            columns = (self.获取文本("序号"), self.获取文本("反馈文本"), 
+                      self.获取文本("质量预测"), self.获取文本("质量概率"))
+            
+            for i, col in enumerate(columns):
+                self.分析结果树.heading(f'#{i+1}', text=col)
+    
+    def 更新所有界面文本(self):
+        """更新所有界面组件的文本"""
+        # 递归更新所有widget的文本
+        def 更新widget文本(widget):
+            if isinstance(widget, ttk.Button):
+                text = widget.cget("text")
+                if text:
+                    # 查找对应的翻译
+                    for key, value in self.语言字典["中文"].items():
+                        if value == text:
+                            widget.config(text=self.获取文本(key))
+                            break
+            elif isinstance(widget, ttk.Label):
+                text = widget.cget("text")
+                if text:
+                    for key, value in self.语言字典["中文"].items():
+                        if value == text:
+                            widget.config(text=self.获取文本(key))
+                            break
+            elif isinstance(widget, ttk.LabelFrame):
+                text = widget.cget("text")
+                if text:
+                    for key, value in self.语言字典["中文"].items():
+                        if value == text:
+                            widget.config(text=self.获取文本(key))
+                            break
+            elif isinstance(widget, ttk.Frame) or isinstance(widget, tk.Frame):
+                for child in widget.winfo_children():
+                    更新widget文本(child)
+        
+        # 从根窗口开始更新
+        for child in self.root.winfo_children():
+            更新widget文本(child)
+    
+    def 初始化专业词库(self):
+        """初始化或加载麻醉专业词库"""
+        基础词汇 = [
+            "纤支镜", "双腔气管插管", "麻醉诱导", "麻醉维持", "麻醉复苏",
+            "硬膜外麻醉", "腰麻", "全麻", "局麻", "镇静镇痛",
+            "呼吸机", "血氧饱和度", "心电图", "血压监测", "气道管理",
+            "术中知晓", "术后恶心呕吐", "困难气道", "快速顺序诱导",
+            "丙泊酚", "芬太尼", "罗库溴铵", "七氟烷", "依托咪酯",
+            "喉罩", "气管导管", "中心静脉穿刺", "动脉穿刺", "椎管内麻醉",
+            "臂丛阻滞", "术后镇痛", "麻醉深度", "血流动力学", "呼吸循环"
+        ]
+        
+        if not os.path.exists(self.专业词库文件):
+            with open(self.专业词库文件, 'w', encoding='utf-8') as f:
+                for word in 基础词汇:
+                    f.write(word + '\n')
+        
+        # 加载专业词库到jieba
+        jieba.load_userdict(self.专业词库文件)
+    
+    def 查找特征列名(self, data_columns):
+        """在数据列中查找匹配的特征列名"""
+        找到的列名 = {}
+        
+        for 标准特征名, 可能列名列表 in self.可能特征列名.items():
+            找到列 = None
+            for 可能列名 in 可能列名列表:
+                if 可能列名 in data_columns:
+                    找到列 = 可能列名
+                    break
+            
+            if 找到列:
+                找到的列名[标准特征名] = 找到列
+            else:
+                # 如果没有精确匹配，尝试部分匹配
+                for col in data_columns:
+                    if any(关键字 in col for 关键字 in 可能列名列表):
+                        找到的列名[标准特征名] = col
+                        break
+        
+        return 找到的列名
+    
+    def 添加专业词汇(self, 新词汇列表):
+        """向专业词库添加新词汇"""
+        try:
+            with open(self.专业词库文件, 'a', encoding='utf-8') as f:
+                for word in 新词汇列表:
+                    f.write(word + '\n')
+            # 重新加载词库
+            jieba.load_userdict(self.专业词库文件)
+            return True
+        except Exception as e:
+            print(f"添加词汇失败: {e}")
+            return False
+    
+    def 文本预处理(self, 文本):
+        """预处理文本数据"""
+        if pd.isna(文本) or 文本 is None:
+            return ""
+        
+        # 检查是否为空白文本
+        if isinstance(文本, str) and len(文本.strip()) == 0:
+            return ""
+        
+        # 移除特殊字符和多余空格
+        文本 = re.sub(r'[^\w\u4e00-\u9fff]', ' ', str(文本))
+        文本 = re.sub(r'\s+', ' ', 文本).strip()
+        
+        # 如果预处理后为空，返回空字符串
+        if len(文本) == 0:
+            return ""
+        
+        # 使用jieba分词
+        try:
+            words = jieba.lcut(文本)
+            # 过滤停用词和短词
+            words = [word for word in words if len(word) > 1 and word not in self.停用词列表]
+            
+            if len(words) == 0:
+                return ""
+                
+            return ' '.join(words)
+        except Exception as e:
+            print(f"分词错误: {e}")
+            return ""
+    
+    def 获取停用词列表(self):
+        """获取中文停用词列表"""
+        停用词 = [
+            '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', 
+            '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', 
+            '会', '着', '没有', '看', '好', '自己', '这', '那', '他', '她', '它'
+        ]
+        return 停用词
+    
+    def 提取文本特征(self, 文本列表):
+        """从文本中提取多种特征"""
+        # 过滤空文本
+        有效文本列表 = [文本 for 文本 in 文本列表 if 文本 and len(文本.strip()) > 0]
+        
+        if len(有效文本列表) == 0:
+            # 返回空的特征矩阵
+            return np.array([]).reshape(len(文本列表), 0)
+        
+        if self.向量化器 is None:
+            # 使用TF-IDF
+            self.向量化器 = TfidfVectorizer(
+                max_features=500,  # 减少特征数量防止过拟合
+                min_df=2,  # 至少出现2次
+                max_df=0.95,
+                ngram_range=(1, 2),
+                sublinear_tf=True
+            )
+            try:
+                特征矩阵 = self.向量化器.fit_transform(有效文本列表)
+            except Exception as e:
+                print(f"TF-IDF特征提取失败: {e}")
+                return np.array([]).reshape(len(文本列表), 0)
+        else:
+            try:
+                特征矩阵 = self.向量化器.transform(有效文本列表)
+            except Exception as e:
+                print(f"TF-IDF特征转换失败: {e}")
+                return np.array([]).reshape(len(文本列表), 0)
+        
+        # 如果原始文本列表中有空文本，需要填充
+        if len(有效文本列表) < len(文本列表):
+            完整特征矩阵 = np.zeros((len(文本列表), 特征矩阵.shape[1]))
+            有效索引 = [i for i, 文本 in enumerate(文本列表) if 文本 and len(文本.strip()) > 0]
+            完整特征矩阵[有效索引] = 特征矩阵.toarray()
+            return 完整特征矩阵
+        else:
+            return 特征矩阵.toarray()
+    
+    def 提取手工特征(self, 文本列表):
+        """提取手工定义的特征"""
+        手工特征 = []
+        
+        for 文本 in 文本列表:
+            features = []
+            
+            # 文本长度特征
+            features.append(len(文本))
+            features.append(len(文本.split()))
+            
+            # 专业词汇数量
+            专业词汇列表 = self.获取专业词汇列表()
+            专业词计数 = sum(1 for word in 文本.split() if word in 专业词汇列表)
+            features.append(专业词计数)
+            
+            # 句子复杂度（平均词长）
+            words = 文本.split()
+            if words:
+                avg_word_len = np.mean([len(word) for word in words])
+            else:
+                avg_word_len = 0
+            features.append(avg_word_len)
+            
+            # 添加更多特征
+            features.append(len([c for c in 文本 if c.isdigit()]))  # 数字数量
+            features.append(len([c for c in 文本 if c.isspace()]))  # 空格数量
+            
+            手工特征.append(features)
+        
+        return np.array(手工特征)
+    
+    def 获取专业词汇列表(self):
+        """获取专业词汇列表"""
+        try:
+            with open(self.专业词库文件, 'r', encoding='utf-8') as f:
+                return [line.strip() for line in f.readlines()]
+        except:
+            return []
+    
+    def 数据预处理(self):
+        """数据预处理：加载数据并识别空白反馈"""
+        try:
+            file_path = filedialog.askopenfilename(
+                title=self.获取文本("选择训练数据Excel文件"),
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+            
+            if not file_path:
+                return
+            
+            # 读取数据
+            data = pd.read_excel(file_path)
+            
+            # 检查必要的列
+            if '反馈文本' not in data.columns:
+                messagebox.showerror(self.获取文本("错误"), self.获取文本("Excel文件必须包含反馈文本列"))
+                return
+            
+            # 查找特征列名
+            self.特征列映射 = self.查找特征列名(data.columns.tolist())
+            
+            # 检查是否找到了所有特征列
+            if len(self.特征列映射) < 6:
+                缺失特征 = [特征 for 特征 in self.可能特征列名.keys() if 特征 not in self.特征列映射]
+                messagebox.showwarning(self.获取文本("警告"), 
+                    self.获取文本("数据中未找到完整的高质量特征列").format(
+                        list(self.特征列映射.values()), 缺失特征))
+                return
+            
+            print(f"找到的特征列映射: {self.特征列映射}")
+            
+            # 预处理文本
+            self.进度标签.config(text=self.获取文本("正在预处理文本"))
+            self.root.update()
+            
+            data['处理文本'] = data['反馈文本'].apply(self.文本预处理)
+            
+            # 识别空白反馈
+            空白反馈掩码 = data['处理文本'] == ""
+            空白数量 = 空白反馈掩码.sum()
+            非空白数量 = len(data) - 空白数量
+            
+            if 非空白数量 == 0:
+                messagebox.showerror(self.获取文本("错误"), self.获取文本("所有反馈文本都是空白文本"))
+                return
+            
+            print(f"空白反馈数量: {空白数量}, 非空白反馈数量: {非空白数量}")
+            
+            # 检查是否有足够的非空文本
+            if 非空白数量 < 10:
+                messagebox.showerror(self.获取文本("错误"), 
+                                  self.获取文本("有效文本数量不足").format(非空白数量))
+                return
+            
+            # 保存预处理数据
+            self.预处理数据 = data
+            self.空白反馈掩码 = 空白反馈掩码
+            
+            self.进度标签.config(text=self.获取文本("数据预处理完成").format(空白数量, 非空白数量))
+            
+        except Exception as e:
+            messagebox.showerror(self.获取文本("错误"), 
+                              self.获取文本("数据预处理过程中出错").format(str(e)))
+            self.进度标签.config(text=self.获取文本("数据预处理失败"))
+    
+    def 计算质量标签(self, data):
+        """根据6个高质量特征计算质量标签"""
+        try:
+            # 使用找到的特征列
+            特征列列表 = list(self.特征列映射.values())
+            
+            # 检查特征列是否都为0/1
+            for col in 特征列列表:
+                unique_values = data[col].dropna().unique()
+                if not set(unique_values).issubset({0, 1}):
+                    print(f"警告: 特征列 {col} 包含非0/1值: {unique_values}")
+                    # 尝试转换为0/1
+                    data[col] = data[col].apply(lambda x: 1 if x != 0 else 0)
+            
+            # 计算每个样本的特征数量
+            特征数量 = data[特征列列表].sum(axis=1)
+            
+            # 根据标准：≥4个特征被认为是高质量
+            质量标签 = (特征数量 >= 4).astype(int)
+            
+            print(f"质量标签分布: 高质量={质量标签.sum()}, 低质量={(质量标签==0).sum()}")
+            print(f"各特征统计: {data[特征列列表].sum().to_dict()}")
+            
+            return 质量标签
+            
+        except Exception as e:
+            print(f"计算质量标签时出错: {e}")
+            return None
+    
+    def 提取高质量特征关键词(self, 文本列表):
+        """提取与6个高质量特征相关的关键词特征"""
+        特征矩阵 = []
+        
+        for 文本 in 文本列表:
+            features = []
+            words = 文本.split()
+            
+            for feature, keywords in self.高质量特征关键词.items():
+                # 计算关键词出现次数
+                关键词计数 = sum(1 for keyword in keywords if any(keyword in word for word in words))
+                features.append(关键词计数)
+                
+                # 添加是否存在该特征的二值特征
+                features.append(1 if 关键词计数 > 0 else 0)
+            
+            特征矩阵.append(features)
+        
+        return np.array(特征矩阵)
+    
+    def 计算二项分布置信区间(self, p, n, confidence=0.95):
+        """计算二项分布比例的置信区间（Wilson方法，适用于小样本）"""
+        if n == 0:
+            return 0.0, 0.0
+        
+        # Wilson score interval
+        z = stats.norm.ppf(1 - (1 - confidence) / 2)
+        
+        denominator = 1 + z**2 / n
+        center = (p + z**2 / (2 * n)) / denominator
+        spread = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denominator
+        
+        lower = max(0.0, center - spread)
+        upper = min(1.0, center + spread)
+        
+        return lower, upper
+    
+    def 找到最佳阈值(self, model, X, y):
+        """基于最大准确率找到最优的分类阈值（方案2改进）"""
+        from sklearn.metrics import accuracy_score
+        
+        阈值列表 = np.arange(0.1, 0.9, 0.02)  # 扩大搜索范围，更细的步长
+        best_threshold = 0.5
+        best_accuracy = 0
+        
+        y_prob = model.predict_proba(X)[:, 1]
+        
+        for threshold in 阈值列表:
+            y_pred = (y_prob >= threshold).astype(int)
+            accuracy = accuracy_score(y, y_pred)
+            
+            if accuracy > best_accuracy:
+                best_accuracy = accuracy
+                best_threshold = threshold
+        
+        print(f"找到最佳阈值: {best_threshold:.3f}, 准确率: {best_accuracy:.3f}")
+        return best_threshold
+    
+    def 交叉验证评估(self, model, X, y, cv=5):
+        """执行交叉验证评估模型稳定性"""
+        skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
+        cv_scores = []
+        
+        for train_idx, val_idx in skf.split(X, y):
+            X_train_cv, X_val_cv = X[train_idx], X[val_idx]
+            y_train_cv, y_val_cv = y.iloc[train_idx], y.iloc[val_idx]
+            
+            # 应用SMOTE平衡数据
+            try:
+                smote = SMOTE(random_state=42)
+                X_train_cv_balanced, y_train_cv_balanced = smote.fit_resample(X_train_cv, y_train_cv)
+            except Exception as e:
+                print(f"交叉验证中SMOTE失败: {e}")
+                X_train_cv_balanced, y_train_cv_balanced = X_train_cv, y_train_cv
+            
+            # 复制模型并训练
+            model_cv = type(model)(**model.get_params())
+            model_cv.fit(X_train_cv_balanced, y_train_cv_balanced)
+            
+            # 找到最佳阈值
+            best_threshold_cv = self.找到最佳阈值(model_cv, X_val_cv, y_val_cv)
+            
+            # 使用最佳阈值预测
+            y_prob_cv = model_cv.predict_proba(X_val_cv)[:, 1]
+            y_pred_cv = (y_prob_cv >= best_threshold_cv).astype(int)
+            
+            accuracy = accuracy_score(y_val_cv, y_pred_cv)
+            cv_scores.append(accuracy)
+        
+        return np.mean(cv_scores), np.std(cv_scores)
+    
+    def 计算医院数据特征(self, data, hospital_name):
+        """计算医院数据的各项特征"""
+        # 预处理文本
+        data['处理文本'] = data['反馈文本'].apply(self.文本预处理)
+        
+        # 计算空白反馈比例
+        空白反馈掩码 = data['处理文本'] == ""
+        空白比例 = 空白反馈掩码.mean() * 100
+        
+        # 计算平均反馈长度（字符数）
+        平均长度 = data['反馈文本'].apply(lambda x: len(str(x))).mean()
+        
+        # 计算专业词汇密度
+        专业词汇列表 = self.获取专业词汇列表()
+        专业词汇密度 = []
+        
+        for 文本 in data['处理文本']:
+            if 文本:
+                words = 文本.split()
+                if words:
+                    专业词数 = sum(1 for word in words if word in 专业词汇列表)
+                    密度 = 专业词数 / len(words)
+                else:
+                    密度 = 0
+            else:
+                密度 = 0
+            专业词汇密度.append(密度)
+        
+        平均专业词汇密度 = np.mean(专业词汇密度) * 100  # 百分比
+        
+        # 如果有质量标签，计算高质量比例
+        高质量比例 = None
+        if '质量标签' in data.columns:
+            高质量比例 = (data['质量标签'] == '高质量').mean() * 100
+        elif all(col in data.columns for col in self.特征列映射.values()):
+            # 计算质量标签
+            特征列列表 = list(self.特征列映射.values())
+            特征数量 = data[特征列列表].sum(axis=1)
+            高质量比例 = (特征数量 >= 4).mean() * 100
+        
+        return {
+            '医院': hospital_name,
+            '样本数': len(data),
+            '平均反馈长度(字符)': round(平均长度, 2),
+            '高质量比例(%)': round(高质量比例, 2) if 高质量比例 is not None else 'N/A',
+            '专业词汇密度(%)': round(平均专业词汇密度, 2),
+            '空白反馈比例(%)': round(空白比例, 2)
+        }
+    
+    def 计算医院间差异P值(self, 医院A数据, 医院B数据):
+        """计算两个医院数据特征的P值"""
+        差异结果 = []
+        
+        # 1. 平均反馈长度比较（t检验）
+        长度A = 医院A数据['反馈文本'].apply(lambda x: len(str(x)))
+        长度B = 医院B数据['反馈文本'].apply(lambda x: len(str(x)))
+        
+        # 检查方差齐性
+        var_test = stats.levene(长度A, 长度B)
+        equal_var = var_test.pvalue > 0.05
+        
+        # 执行t检验
+        t_stat, p_value = stats.ttest_ind(长度A, 长度B, equal_var=equal_var)
+        差异结果.append(('平均反馈长度', t_stat, p_value))
+        
+        # 2. 专业词汇密度比较（非参数检验）
+        密度A = []
+        for 文本 in 医院A数据['处理文本']:
+            if 文本:
+                words = 文本.split()
+                if words:
+                    专业词汇列表 = self.获取专业词汇列表()
+                    专业词数 = sum(1 for word in words if word in 专业词汇列表)
+                    密度A.append(专业词数 / len(words))
+                else:
+                    密度A.append(0)
+            else:
+                密度A.append(0)
+        
+        密度B = []
+        for 文本 in 医院B数据['处理文本']:
+            if 文本:
+                words = 文本.split()
+                if words:
+                    专业词汇列表 = self.获取专业词汇列表()
+                    专业词数 = sum(1 for word in words if word in 专业词汇列表)
+                    密度B.append(专业词数 / len(words))
+                else:
+                    密度B.append(0)
+            else:
+                密度B.append(0)
+        
+        # Mann-Whitney U检验（非参数）
+        u_stat, p_value = mannwhitneyu(密度A, 密度B)
+        差异结果.append(('专业词汇密度', u_stat, p_value))
+        
+        # 3. 空白反馈比例比较（卡方检验）
+        空白A = (医院A数据['处理文本'] == "").sum()
+        非空白A = len(医院A数据) - 空白A
+        
+        空白B = (医院B数据['处理文本'] == "").sum()
+        非空白B = len(医院B数据) - 空白B
+        
+        列联表 = [[空白A, 非空白A], [空白B, 非空白B]]
+        chi2, p_value, _, _ = chi2_contingency(列联表)
+        差异结果.append(('空白反馈比例', chi2, p_value))
+        
+        # 4. 高质量比例比较（如果都有质量标签）
+        if '质量标签' in 医院A数据.columns and '质量标签' in 医院B数据.columns:
+            高质量A = (医院A数据['质量标签'] == '高质量').sum()
+            低质量A = len(医院A数据) - 高质量A
+            
+            高质量B = (医院B数据['质量标签'] == '高质量').sum()
+            低质量B = len(医院B数据) - 高质量B
+            
+            列联表 = [[高质量A, 低质量A], [高质量B, 低质量B]]
+            chi2, p_value, _, _ = chi2_contingency(列联表)
+            差异结果.append(('高质量比例', chi2, p_value))
+        
+        return 差异结果
+    
+    def 训练测试数据(self):
+        """训练和测试模型 - 改进版本（包含SMOTE和更优阈值搜索）"""
+        try:
+            if self.预处理数据 is None:
+                messagebox.showwarning(self.获取文本("警告"), self.获取文本("请先进行数据预处理"))
+                return
+            
+            data = self.预处理数据.copy()
+            空白反馈掩码 = self.空白反馈掩码
+            
+            print(f"总样本数: {len(data)}, 空白反馈: {空白反馈掩码.sum()}, 非空白反馈: {(~空白反馈掩码).sum()}")
+            
+            # 分离空白反馈和非空白反馈
+            空白数据 = data[空白反馈掩码]
+            非空白数据 = data[~空白反馈掩码]
+            
+            print(f"空白数据: {len(空白数据)}条, 非空白数据: {len(非空白数据)}条")
+            
+            # 对非空白数据计算质量标签
+            self.进度标签.config(text=self.获取文本("正在计算质量标签"))
+            self.root.update()
+            
+            y_quality = self.计算质量标签(非空白数据)
+            
+            if y_quality is None:
+                return
+            
+            # 检查标签多样性
+            unique_labels = np.unique(y_quality)
+            if len(unique_labels) < 2:
+                messagebox.showerror(self.获取文本("错误"), 
+                                  self.获取文本("目标变量缺乏多样性").format(unique_labels))
+                return
+            
+            print(f"质量标签分布: 高质量={y_quality.sum()}, 低质量={(y_quality==0).sum()}")
+            print(f"高质量比例: {y_quality.mean():.2%}")
+            
+            # 提取非空白数据的特征
+            self.进度标签.config(text=self.获取文本("正在提取特征"))
+            self.root.update()
+            
+            # 文本特征
+            X_text = self.提取文本特征(非空白数据['处理文本'].tolist())
+            
+            # 手工特征
+            X_manual = self.提取手工特征(非空白数据['处理文本'].tolist())
+            
+            # 高质量特征关键词特征
+            X_keywords = self.提取高质量特征关键词(非空白数据['处理文本'].tolist())
+            
+            # 检查特征维度
+            if X_text.shape[1] == 0 and X_manual.shape[1] == 0 and X_keywords.shape[1] == 0:
+                messagebox.showerror(self.获取文本("错误"), self.获取文本("特征提取失败"))
+                return
+            
+            # 合并特征
+            X_combined = []
+            if X_text.shape[1] > 0:
+                X_combined.append(X_text)
+            if X_manual.shape[1] > 0:
+                X_combined.append(X_manual)
+            if X_keywords.shape[1] > 0:
+                X_combined.append(X_keywords)
+            
+            X = np.hstack(X_combined) if len(X_combined) > 1 else X_combined[0]
+            
+            print(f"特征矩阵形状: {X.shape}")
+            print(f"质量标签分布: {pd.Series(y_quality).value_counts().to_dict()}")
+            
+            # 检查样本数量是否足够
+            if len(X) < 50:
+                messagebox.showwarning(self.获取文本("警告"), 
+                                    self.获取文本("样本数量较少警告").format(len(X)))
+            
+            # 8:2分层划分训练测试集（增加测试集比例）
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y_quality, test_size=0.2, random_state=42, 
+                stratify=y_quality
+            )
+            
+            print(f"训练集形状: {X_train.shape}, 测试集形状: {X_test.shape}")
+            
+            # 特征标准化
+            self.标准化器 = StandardScaler()
+            try:
+                X_train_scaled = self.标准化器.fit_transform(X_train)
+                X_test_scaled = self.标准化器.transform(X_test)
+            except Exception as e:
+                print(f"标准化失败: {e}")
+                X_train_scaled, X_test_scaled = X_train, X_test
+            
+            # 应用SMOTE平衡数据（方案3）
+            try:
+                print("应用SMOTE平衡训练数据...")
+                print(f"平衡前训练集标签分布: {np.bincount(y_train)}")
+                
+                smote = SMOTE(random_state=42)
+                X_train_balanced, y_train_balanced = smote.fit_resample(X_train_scaled, y_train)
+                
+                print(f"平衡后训练集形状: {X_train_balanced.shape}")
+                print(f"平衡后训练集标签分布: {np.bincount(y_train_balanced)}")
+            except Exception as e:
+                print(f"SMOTE平衡失败: {e}")
+                X_train_balanced, y_train_balanced = X_train_scaled, y_train
+            
+            # 定义模型 - 使用更简单的模型防止过拟合
+            models = {
+                '逻辑回归': LogisticRegression(
+                    C=0.1,  # 更强的正则化
+                    max_iter=1000,
+                    random_state=42,
+                    class_weight='balanced'  # 添加类别权重
+                ),
+                '随机森林': RandomForestClassifier(
+                    n_estimators=50,  # 减少树的数量
+                    max_depth=5,  # 限制深度
+                    min_samples_split=20,  # 增加分裂所需样本
+                    min_samples_leaf=10,  # 增加叶节点样本
+                    random_state=42,
+                    class_weight='balanced'  # 添加类别权重
+                ),
+                '梯度提升机': GradientBoostingClassifier(
+                    n_estimators=50,  # 减少树的数量
+                    learning_rate=0.05,  # 降低学习率
+                    max_depth=3,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
+                    random_state=42,
+                    subsample=0.7  # 子采样
+                )
+            }
+            
+            结果 = []
+            self.模型字典 = {}
+            
+            for name, model in models.items():
+                self.进度标签.config(text=self.获取文本("正在训练模型").format(name))
+                self.root.update()
+                
+                try:
+                    print(f"开始训练{name}...")
+                    
+                    # 执行交叉验证评估
+                    cv_mean, cv_std = self.交叉验证评估(model, X_train_balanced, y_train_balanced, cv=5)
+                    print(f"{name}交叉验证准确率: {cv_mean:.3f} ± {cv_std:.3f}")
+                    
+                    # 训练模型
+                    model.fit(X_train_balanced, y_train_balanced)
+                    
+                    # 找到最佳阈值
+                    最佳阈值 = self.找到最佳阈值(model, X_test_scaled, y_test)
+                    
+                    # 预测
+                    y_prob = model.predict_proba(X_test_scaled)[:, 1]
+                    y_pred = (y_prob >= 最佳阈值).astype(int)
+                    
+                    # 计算指标
+                    accuracy = accuracy_score(y_test, y_pred)
+                    precision = precision_score(y_test, y_pred, zero_division=0)
+                    recall = recall_score(y_test, y_pred, zero_division=0)
+                    f1 = f1_score(y_test, y_pred, zero_division=0)
+                    auc_score = roc_auc_score(y_test, y_prob) if len(np.unique(y_test)) > 1 else 0.5
+                    
+                    # 计算混淆矩阵
+                    cm = confusion_matrix(y_test, y_pred)
+                    print(f"{name}混淆矩阵:\n{cm}")
+                    print(f"{name}分类报告:\n{classification_report(y_test, y_pred)}")
+                    
+                    # 保存结果
+                    结果.append({
+                        '算法': name,
+                        'AUC': round(auc_score, 3),
+                        '准确率': round(accuracy, 3),
+                        '交叉验证准确率': f"{cv_mean:.3f} ± {cv_std:.3f}",
+                        '精确率': round(precision, 3),
+                        '召回率': round(recall, 3),
+                        'F1分数': round(f1, 3),
+                        '最佳阈值': round(最佳阈值, 3),
+                        '训练样本数': len(X_train_balanced),
+                        '测试样本数': len(X_test)
+                    })
+                    
+                    # 保存模型
+                    self.模型字典[name] = {
+                        '模型': model,
+                        'AUC': auc_score,
+                        '准确率': accuracy,
+                        '精确率': precision,
+                        '召回率': recall,
+                        'F1分数': f1,
+                        '最佳阈值': 最佳阈值,
+                        '交叉验证准确率': cv_mean,
+                        '交叉验证标准差': cv_std
+                    }
+                    
+                    print(f"{name}训练成功")
+                    
+                except Exception as e:
+                    print(f"训练{name}时出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+            
+            # 选择最佳模型（基于交叉验证准确率）
+            if 结果:
+                # 根据交叉验证准确率选择最佳模型
+                best_model_info = max(结果, key=lambda x: float(x['交叉验证准确率'].split('±')[0]))
+                self.质量模型 = self.模型字典[best_model_info['算法']]['模型']
+                self.最佳算法 = best_model_info['算法']
+                self.最佳阈值 = best_model_info['最佳阈值']
+                
+                # 更新滑动条（方案1：允许用户调整）
+                self.质量阈值滑动条.set(int(self.最佳阈值 * 100))
+                
+                # 保存数据
+                self.空白数据 = 空白数据
+                self.非空白数据 = 非空白数据
+                self.X_train = X_train_balanced
+                self.y_train = y_train_balanced
+                self.X_test = X_test_scaled
+                self.y_test = y_test
+                
+                # 保存性能结果
+                self.训练性能结果 = pd.DataFrame(结果)
+                
+                # 显示结果
+                self.显示训练结果(结果)
+                
+                # 显示空白反馈统计
+                空白统计 = self.获取文本("空白反馈").format(len(空白数据))
+                self.进度标签.config(text=self.获取文本("模型训练完成").format(
+                    self.最佳算法, self.最佳阈值, 空白统计))
+                
+                # 显示模型稳定性信息
+                stability_msg = f"交叉验证准确率: {self.模型字典[self.最佳算法]['交叉验证准确率']:.3f} ± {self.模型字典[self.最佳算法]['交叉验证标准差']:.3f}"
+                self.稳定性标签.config(text=stability_msg)
+                
+                # 显示过拟合警告
+                test_accuracy = best_model_info['准确率']
+                cv_accuracy = float(best_model_info['交叉验证准确率'].split('±')[0])
+                if test_accuracy - cv_accuracy > 0.1:
+                    self.过拟合标签.config(text=self.获取文本("过拟合风险警告"), foreground="red")
+                else:
+                    self.过拟合标签.config(text=self.获取文本("模型稳定性良好标签"), foreground="green")
+                
+                # 自动保存性能结果
+                self.保存性能结果()
+                
+            else:
+                messagebox.showerror(self.获取文本("错误"), self.获取文本("所有模型训练失败"))
+            
+        except Exception as e:
+            messagebox.showerror(self.获取文本("错误"), 
+                              self.获取文本("训练过程中出错").format(str(e)))
+            self.进度标签.config(text=self.获取文本("训练失败"))
+    
+    def 显示训练结果(self, 结果):
+        """显示训练结果"""
+        # 清空结果框
+        for item in self.结果树.get_children():
+            self.结果树.delete(item)
+        
+        # 添加结果
+        for res in 结果:
+            self.结果树.insert("", "end", values=(
+                res['算法'], 
+                res['AUC'], 
+                res['准确率'], 
+                res['交叉验证准确率'],
+                res['精确率'], 
+                res['召回率'], 
+                res['F1分数'],
+                f"{res['最佳阈值']:.2f}"
+            ))
+    
+    def 保存性能结果(self):
+        """保存算法性能结果到Excel文件"""
+        try:
+            if self.训练性能结果 is not None:
+                # 生成带时间戳的文件名
+                时间戳 = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                文件名 = f"算法性能结果_{时间戳}.xlsx"
+                
+                # 添加训练信息
+                性能报告 = pd.DataFrame({
+                    '训练时间': [datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                    '最佳算法': [self.最佳算法],
+                    '最佳阈值': [self.最佳阈值],
+                    '总样本数': [len(self.预处理数据)],
+                    '空白反馈数量': [len(self.空白数据)],
+                    '非空白反馈数量': [len(self.非空白数据)],
+                    '训练集样本数': [self.训练性能结果.iloc[0]['训练样本数']],
+                    '测试集样本数': [self.训练性能结果.iloc[0]['测试样本数']],
+                    '交叉验证准确率': [f"{self.模型字典[self.最佳算法]['交叉验证准确率']:.3f} ± {self.模型字典[self.最佳算法]['交叉验证标准差']:.3f}"],
+                    '空白反馈处理方式': ['在模型训练前单独识别，标记为低质量，不参与特征提取和模型训练'],
+                    '质量评价标准': ['6个特征中≥4个特征存在为高质量'],
+                    '使用的特征列': [str(self.特征列映射)],
+                    '模型稳定性说明': ['交叉验证准确率反映了模型在新数据上的预期性能']
+                })
+                
+                with pd.ExcelWriter(文件名, engine='openpyxl') as writer:
+                    性能报告.to_excel(writer, sheet_name='训练信息', index=False)
+                    self.训练性能结果.drop(columns=['训练样本数', '测试样本数']).to_excel(writer, sheet_name='算法性能', index=False)
+                    
+                    # 添加空白反馈详细信息
+                    if len(self.空白数据) > 0:
+                        空白反馈详情 = self.空白数据.copy()
+                        空白反馈详情['质量标签'] = '低质量（空白反馈）'
+                        空白反馈详情['处理方式'] = '空白反馈自动标记'
+                        空白反馈详情[['反馈文本', '质量标签', '处理方式']].to_excel(
+                            writer, sheet_name='空白反馈详情', index=False)
+                    
+                    # 添加高质量特征说明
+                    特征说明 = pd.DataFrame({
+                        '标准特征名': list(self.可能特征列名.keys()),
+                        '实际数据列名': [self.特征列映射.get(特征, "未找到") for 特征 in self.可能特征列名.keys()],
+                        '说明': [
+                            '评价住培医师某一特定行为（非人格或特质）',
+                            '提供信息，描述观察到的情况或发生的行为（无论长短）',
+                            '指出住培医师的缺点或错误',
+                            '评价住培医师是否有专业性的计划、准备和沟通能力',
+                            '直接指出与住培医师具体行为相关的具体信息',
+                            '指出住培医师需要努力改进的具体领域'
+                        ]
+                    })
+                    特征说明.to_excel(writer, sheet_name='高质量特征说明', index=False)
+                
+                print(f"性能结果已保存到: {文件名}")
+                return 文件名
+            else:
+                print("没有性能结果可保存")
+                return None
+        except Exception as e:
+            print(f"保存性能结果失败: {e}")
+            return None
+    
+    def 保存模型(self):
+        """保存训练好的模型"""
+        try:
+            if self.质量模型 is not None:
+                with open('质量模型.pkl', 'wb') as f:
+                    pickle.dump(self.质量模型, f)
+                with open('向量化器.pkl', 'wb') as f:
+                    pickle.dump(self.向量化器, f)
+                with open('标准化器.pkl', 'wb') as f:
+                    pickle.dump(self.标准化器, f)
+                # 保存特征列映射
+                with open('特征列映射.pkl', 'wb') as f:
+                    pickle.dump(self.特征列映射, f)
+                # 保存空白反馈掩码
+                with open('空白反馈掩码.pkl', 'wb') as f:
+                    pickle.dump(self.空白反馈掩码, f)
+                # 保存最佳阈值
+                with open('最佳阈值.pkl', 'wb') as f:
+                    pickle.dump(self.最佳阈值, f)
+                messagebox.showinfo(self.获取文本("成功"), self.获取文本("保存成功"))
+            else:
+                messagebox.showwarning(self.获取文本("警告"), self.获取文本("没有训练好的模型"))
+        except Exception as e:
+            messagebox.showerror(self.获取文本("错误"), 
+                              f"{self.获取文本('保存失败')}: {str(e)}")
+    
+    def 加载模型(self):
+        """加载已训练的模型"""
+        try:
+            with open('质量模型.pkl', 'rb') as f:
+                self.质量模型 = pickle.load(f)
+            with open('向量化器.pkl', 'rb') as f:
+                self.向量化器 = pickle.load(f)
+            with open('标准化器.pkl', 'rb') as f:
+                self.标准化器 = pickle.load(f)
+            with open('特征列映射.pkl', 'rb') as f:
+                self.特征列映射 = pickle.load(f)
+            with open('空白反馈掩码.pkl', 'rb') as f:
+                self.空白反馈掩码 = pickle.load(f)
+            with open('最佳阈值.pkl', 'rb') as f:
+                self.最佳阈值 = pickle.load(f)
+                # 更新滑动条
+                self.质量阈值滑动条.set(int(self.最佳阈值 * 100))
+            messagebox.showinfo(self.获取文本("成功"), self.获取文本("加载成功"))
+        except Exception as e:
+            messagebox.showerror(self.获取文本("错误"), 
+                              f"{self.获取文本('加载失败')}: {str(e)}")
+    
+    def 计算总体准确率指标(self, data, y_true, y_pred):
+        """计算总体准确率指标（包含空白反馈和非空白反馈）"""
+        try:
+            # 分离空白反馈和非空白反馈
+            空白反馈掩码 = data['处理文本'] == ""
+            非空白数据 = data[~空白反馈掩码]
+            空白数据 = data[空白反馈掩码]
+            
+            # 总体准确率（包含空白和非空白）
+            总体准确率 = accuracy_score(y_true, y_pred)
+            
+            # 计算总体准确率的置信区间
+            总体准确率_ci_lower, 总体准确率_ci_upper = self.计算二项分布置信区间(
+                总体准确率, len(y_true), confidence=0.95)
+            
+            # 非空白反馈准确率
+            非空白准确率 = None
+            非空白准确率_ci_lower = None
+            非空白准确率_ci_upper = None
+            if len(非空白数据) > 0:
+                非空白真实标签 = y_true[~空白反馈掩码]
+                非空白预测标签 = y_pred[~空白反馈掩码]
+                if len(非空白真实标签) > 0:
+                    非空白准确率 = accuracy_score(非空白真实标签, 非空白预测标签)
+                    # 计算非空白准确率的置信区间
+                    非空白准确率_ci_lower, 非空白准确率_ci_upper = self.计算二项分布置信区间(
+                        非空白准确率, len(非空白真实标签), confidence=0.95)
+            
+            # 空白反馈准确率（假设空白反馈真实标签为0）
+            空白准确率 = None
+            空白准确率_ci_lower = None
+            空白准确率_ci_upper = None
+            if len(空白数据) > 0:
+                空白真实标签 = y_true[空白反馈掩码]
+                空白预测标签 = y_pred[空白反馈掩码]
+                if len(空白真实标签) > 0:
+                    空白准确率 = accuracy_score(空白真实标签, 空白预测标签)
+                    # 计算空白准确率的置信区间
+                    空白准确率_ci_lower, 空白准确率_ci_upper = self.计算二项分布置信区间(
+                        空白准确率, len(空白真实标签), confidence=0.95)
+            
+            # 计算其他性能指标
+            总体精确率 = precision_score(y_true, y_pred, zero_division=0)
+            总体召回率 = recall_score(y_true, y_pred, zero_division=0)
+            总体F1分数 = f1_score(y_true, y_pred, zero_division=0)
+            
+            return {
+                '总体准确率': 总体准确率,
+                '总体准确率_ci_lower': 总体准确率_ci_lower,
+                '总体准确率_ci_upper': 总体准确率_ci_upper,
+                '非空白反馈准确率': 非空白准确率,
+                '非空白反馈准确率_ci_lower': 非空白准确率_ci_lower,
+                '非空白反馈准确率_ci_upper': 非空白准确率_ci_upper,
+                '空白反馈准确率': 空白准确率,
+                '空白反馈准确率_ci_lower': 空白准确率_ci_lower,
+                '空白反馈准确率_ci_upper': 空白准确率_ci_upper,
+                '总体精确率': 总体精确率,
+                '总体召回率': 总体召回率,
+                '总体F1分数': 总体F1分数,
+                '非空白样本数': len(非空白数据),
+                '空白样本数': len(空白数据)
+            }
+        except Exception as e:
+            print(f"计算总体准确率指标时出错: {e}")
+            return None
+    
+    def 测试新数据(self):
+        """测试新的反馈数据 - 优化版本（使用滑动条阈值）"""
+        try:
+            if self.质量模型 is None:
+                messagebox.showwarning(self.获取文本("警告"), self.获取文本("请先训练或加载模型"))
+                return
+            
+            file_path = filedialog.askopenfilename(
+                title=self.获取文本("选择要测试的Excel文件"),
+                filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")]
+            )
+            
+            if not file_path:
+                return
+            
+            # 读取数据
+            data = pd.read_excel(file_path)
+            
+            if '反馈文本' not in data.columns:
+                messagebox.showerror(self.获取文本("错误"), self.获取文本("Excel文件必须包含反馈文本列"))
+                return
+            
+            self.进度标签.config(text=self.获取文本("正在测试数据"))
+            self.root.update()
+            
+            # 预处理文本并识别空白反馈
+            data['处理文本'] = data['反馈文本'].apply(self.文本预处理)
+            
+            # 识别空白反馈
+            空白反馈掩码 = data['处理文本'] == ""
+            空白数量 = 空白反馈掩码.sum()
+            非空白数量 = len(data) - 空白数量
+            
+            print(f"测试数据: 总样本={len(data)}, 空白反馈={空白数量}, 非空白反馈={非空白数量}")
+            
+            # 检查是否有真实标签可用于计算准确率
+            有质量真实标签 = any(col in data.columns for col in self.特征列映射.values())
+            
+            # 初始化结果变量
+            质量准确率 = None
+            质量精确率 = None
+            质量召回率 = None
+            质量F1分数 = None
+            质量AUC = None
+            质量准确率_ci_lower = None
+            质量准确率_ci_upper = None
+            y_quality_true = None
+            
+            # 初始化总体指标
+            总体指标 = None
+            
+            # 处理非空白反馈
+            if 非空白数量 > 0:
+                非空白数据 = data[~空白反馈掩码].copy()
+                
+                # 检查是否有足够的特征
+                if len(非空白数据) < 5:
+                    print(f"警告: 非空白数据太少({len(非空白数据)})，可能影响预测准确性")
+                
+                # 为非空白数据提取特征
+                X_text = self.提取文本特征(非空白数据['处理文本'].tolist())
+                X_manual = self.提取手工特征(非空白数据['处理文本'].tolist())
+                X_keywords = self.提取高质量特征关键词(非空白数据['处理文本'].tolist())
+                
+                # 合并特征
+                X_combined = []
+                if X_text.shape[1] > 0:
+                    X_combined.append(X_text)
+                if X_manual.shape[1] > 0:
+                    X_combined.append(X_manual)
+                if X_keywords.shape[1] > 0:
+                    X_combined.append(X_keywords)
+                
+                if len(X_combined) == 0:
+                    print("警告: 无法提取任何特征")
+                    X = np.zeros((len(非空白数据), 1))
+                else:
+                    X = np.hstack(X_combined) if len(X_combined) > 1 else X_combined[0]
+                
+                print(f"测试数据特征形状: {X.shape}")
+                
+                if X.shape[1] > 0:
+                    try:
+                        X_scaled = self.标准化器.transform(X)
+                    except:
+                        print("标准化失败，使用原始特征")
+                        X_scaled = X
+                    
+                    # 使用滑动条阈值（方案1改进）
+                    质量阈值 = self.质量阈值滑动条.get() / 100.0  # 从滑动条获取阈值
+                    print(f"使用阈值: {质量阈值:.3f} (来自滑动条)")
+                    
+                    # 预测非空白数据
+                    质量概率 = self.质量模型.predict_proba(X_scaled)[:, 1]
+                    
+                    # 应用阈值
+                    质量预测 = (质量概率 >= 质量阈值).astype(int)
+                    
+                    # 将预测结果放回原数据
+                    data.loc[~空白反馈掩码, '质量预测'] = 质量预测
+                    data.loc[~空白反馈掩码, '质量概率'] = 质量概率
+                    
+                    # 如果有真实标签，计算所有指标
+                    if 有质量真实标签:
+                        # 计算质量真实标签
+                        y_quality_true = self.计算质量标签(非空白数据)
+                        if y_quality_true is not None:
+                            # 计算非空白反馈的指标
+                            质量准确率 = accuracy_score(y_quality_true, 质量预测)
+                            质量精确率 = precision_score(y_quality_true, 质量预测, zero_division=0)
+                            质量召回率 = recall_score(y_quality_true, 质量预测, zero_division=0)
+                            质量F1分数 = f1_score(y_quality_true, 质量预测, zero_division=0)
+                            质量AUC = roc_auc_score(y_quality_true, 质量概率)
+                            
+                            # 计算非空白准确率的置信区间
+                            n = len(y_quality_true)
+                            质量准确率_ci_lower, 质量准确率_ci_upper = self.计算二项分布置信区间(
+                                质量准确率, n, confidence=0.95)
+                            
+                            print(f"非空白反馈指标:")
+                            print(f"准确率: {质量准确率:.4f} (95% CI: [{质量准确率_ci_lower:.4f}, {质量准确率_ci_upper:.4f}])")
+                            print(f"精确率: {质量精确率:.4f}")
+                            print(f"召回率: {质量召回率:.4f}")
+                            print(f"F1分数: {质量F1分数:.4f}")
+                            print(f"AUC: {质量AUC:.4f}")
+                            
+                            # 计算总体指标（包含空白反馈）
+                            # 为空白反馈生成真实标签（假设空白反馈真实标签为0）
+                            y_true_all = pd.Series(np.zeros(len(data)), index=data.index)
+                            y_true_all[~空白反馈掩码] = y_quality_true.values
+                            
+                            # 为空白反馈生成预测标签（空白反馈预测为0）
+                            y_pred_all = pd.Series(np.zeros(len(data)), index=data.index)
+                            y_pred_all[~空白反馈掩码] = 质量预测
+                            
+                            # 计算总体指标
+                            总体指标 = self.计算总体准确率指标(data, y_true_all, y_pred_all)
+                            
+                            if 总体指标:
+                                print(f"总体指标:")
+                                print(f"总体准确率: {总体指标['总体准确率']:.4f} (95% CI: [{总体指标['总体准确率_ci_lower']:.4f}, {总体指标['总体准确率_ci_upper']:.4f}])")
+                                print(f"非空白反馈准确率: {总体指标['非空白反馈准确率']:.4f} (95% CI: [{总体指标['非空白反馈准确率_ci_lower']:.4f}, {总体指标['非空白反馈准确率_ci_upper']:.4f}])")
+                                print(f"空白反馈准确率: {总体指标['空白反馈准确率']:.4f} (95% CI: [{总体指标['空白反馈准确率_ci_lower']:.4f}, {总体指标['空白反馈准确率_ci_upper']:.4f}])")
+                                print(f"总体精确率: {总体指标['总体精确率']:.4f}")
+                                print(f"总体召回率: {总体指标['总体召回率']:.4f}")
+                                print(f"总体F1分数: {总体指标['总体F1分数']:.4f}")
+                            
+                            # 输出详细的性能报告
+                            print(f"非空白反馈标签分布: 高质量={y_quality_true.sum()}, 低质量={(y_quality_true==0).sum()}")
+                            print(f"预测标签分布: 高质量={质量预测.sum()}, 低质量={(质量预测==0).sum()}")
+                            cm = confusion_matrix(y_quality_true, 质量预测)
+                            print(f"混淆矩阵:\n{cm}")
+                            print(f"分类报告:\n{classification_report(y_quality_true, 质量预测)}")
+                else:
+                    # 如果没有有效特征，将所有非空白标记为低质量
+                    data.loc[~空白反馈掩码, '质量预测'] = 0
+                    data.loc[~空白反馈掩码, '质量概率'] = 0.0
+                    
+                    # 如果有真实标签，计算总体指标
+                    if 有质量真实标签:
+                        y_quality_true = self.计算质量标签(非空白数据)
+                        if y_quality_true is not None:
+                            # 为空白反馈生成真实标签（假设空白反馈真实标签为0）
+                            y_true_all = pd.Series(np.zeros(len(data)), index=data.index)
+                            y_true_all[~空白反馈掩码] = y_quality_true.values
+                            
+                            # 为空白反馈生成预测标签（空白反馈预测为0）
+                            y_pred_all = pd.Series(np.zeros(len(data)), index=data.index)
+                            y_pred_all[~空白反馈掩码] = 0  # 所有非空白标记为低质量
+                            
+                            # 计算总体指标
+                            总体指标 = self.计算总体准确率指标(data, y_true_all, y_pred_all)
+            
+            # 空白反馈直接标记为低质量
+            data.loc[空白反馈掩码, '质量预测'] = 0
+            data.loc[空白反馈掩码, '质量概率'] = 0.0
+            
+            # 如果没有总体指标且有真实标签，计算总体指标
+            if 总体指标 is None and 有质量真实标签 and y_quality_true is not None:
+                # 为空白反馈生成真实标签（假设空白反馈真实标签为0）
+                y_true_all = pd.Series(np.zeros(len(data)), index=data.index)
+                y_true_all[~空白反馈掩码] = y_quality_true.values
+                
+                # 为空白反馈生成预测标签
+                y_pred_all = pd.Series(np.zeros(len(data)), index=data.index)
+                y_pred_all[~空白反馈掩码] = data.loc[~空白反馈掩码, '质量预测'].values
+                
+                # 计算总体指标
+                总体指标 = self.计算总体准确率指标(data, y_true_all, y_pred_all)
+            
+            # 添加标签
+            data['质量标签'] = data['质量预测'].apply(lambda x: self.获取文本('高质量') if x == 1 else self.获取文本('低质量'))
+            
+            # 为空白反馈添加特殊标签
+            data.loc[空白反馈掩码, '质量标签'] = self.获取文本('低质量（空白反馈）')
+            
+            # 计算预测概率的置信区间（只针对非空白反馈）
+            if 非空白数量 > 0:
+                非空白数据 = data[~空白反馈掩码]
+                if len(非空白数据) > 0:
+                    质量概率值 = 非空白数据['质量概率'].values
+                    mean_prob_q = np.mean(质量概率值)
+                    
+                    # 使用bootstrap计算预测概率均值的置信区间
+                    bootstrap_probs = []
+                    n_samples = len(质量概率值)
+                    for _ in range(1000):
+                        indices = np.random.choice(n_samples, n_samples, replace=True)
+                        mean_prob = np.mean(质量概率值[indices])
+                        bootstrap_probs.append(mean_prob)
+                    
+                    prob_ci_lower_q = np.percentile(bootstrap_probs, 2.5)
+                    prob_ci_upper_q = np.percentile(bootstrap_probs, 97.5)
+                else:
+                    mean_prob_q = 0.0
+                    prob_ci_lower_q = prob_ci_upper_q = 0.0
+            else:
+                mean_prob_q = 0.0
+                prob_ci_lower_q = prob_ci_upper_q = 0.0
+            
+            # 显示结果
+            self.显示分析结果(data)
+            
+            # 保存结果
+            self.当前结果 = data
+            
+            # 医院间差异分析（如果有训练数据）
+            if hasattr(self, '非空白数据') and self.非空白数据 is not None:
+                self.执行医院间差异分析(data, "B医院（测试）")
+            
+            # 生成整合的测试结果报告（Excel和Word）
+            保存路径 = self.生成整合测试报告(data, 
+                                 有质量真实标签,
+                                 质量准确率, 质量精确率, 质量召回率, 质量F1分数, 质量AUC,
+                                 质量准确率_ci_lower, 质量准确率_ci_upper,
+                                 mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                                 y_quality_true, 总体指标)
+            
+            # 显示统计信息
+            高质量比例 = (data['质量预测'] == 1).mean() * 100
+            self.进度标签.config(text=self.获取文本("测试完成").format(高质量比例, 空白数量))
+            
+            # 显示置信区间信息和独立测试指标
+            messagebox_text = f"使用阈值: {质量阈值:.3f}\n"
+            messagebox_text += f"质量平均预测概率: {mean_prob_q:.3f} (95% CI: [{prob_ci_lower_q:.3f}, {prob_ci_upper_q:.3f}])\n(仅针对非空白反馈)"
+            
+            # 显示总体指标（包含置信区间）
+            if 总体指标:
+                messagebox_text += f"\n\n总体性能指标（包含空白和非空白反馈）:"
+                messagebox_text += f"\n总体准确率: {总体指标['总体准确率']:.3f} (95% CI: [{总体指标['总体准确率_ci_lower']:.3f}, {总体指标['总体准确率_ci_upper']:.3f}])"
+                messagebox_text += f"\n非空白反馈准确率: {总体指标['非空白反馈准确率']:.3f} (95% CI: [{总体指标['非空白反馈准确率_ci_lower']:.3f}, {总体指标['非空白反馈准确率_ci_upper']:.3f}])"
+                messagebox_text += f"\n空白反馈准确率: {总体指标['空白反馈准确率']:.3f} (95% CI: [{总体指标['空白反馈准确率_ci_lower']:.3f}, {总体指标['空白反馈准确率_ci_upper']:.3f}])"
+                messagebox_text += f"\n总体精确率: {总体指标['总体精确率']:.3f}"
+                messagebox_text += f"\n总体召回率: {总体指标['总体召回率']:.3f}"
+                messagebox_text += f"\n总体F1分数: {总体指标['总体F1分数']:.3f}"
+                messagebox_text += f"\n样本分布: 非空白={总体指标['非空白样本数']}个, 空白={总体指标['空白样本数']}个"
+            
+            # 只有当有真实标签且准确率不是None时才显示非空白反馈准确率
+            if 有质量真实标签 and 质量准确率 is not None:
+                messagebox_text += f"\n\n非空白反馈性能指标:"
+                messagebox_text += f"\n准确率: {质量准确率:.3f} (95% CI: [{质量准确率_ci_lower:.3f}, {质量准确率_ci_upper:.3f}])"
+                messagebox_text += f"\n精确率: {质量精确率:.3f}"
+                messagebox_text += f"\n召回率: {质量召回率:.3f}"
+                messagebox_text += f"\nF1分数: {质量F1分数:.3f}"
+                messagebox_text += f"\nAUC: {质量AUC:.3f}"
+                
+                # 添加性能说明
+                if 质量准确率 < 0.6:
+                    messagebox_text += "\n\n⚠️ 注意：非空白反馈准确率较低，请尝试:"
+                    messagebox_text += "\n1. 调整阈值滑块（建议尝试0.65-0.80）"
+                    messagebox_text += "\n2. 重新训练模型，使用SMOTE平衡数据"
+                    messagebox_text += "\n3. 检查训练和测试数据分布是否一致"
+            
+            # 添加阈值调整建议
+            if 质量阈值 < 0.6 and 质量准确率 is not None and 质量准确率 < 0.6:
+                messagebox_text += f"\n\n💡 建议: 当前阈值({质量阈值:.2f})可能过低，建议尝试0.65-0.80范围"
+            
+            messagebox.showinfo("预测结果", messagebox_text)
+            
+        except Exception as e:
+            messagebox.showerror(self.获取文本("错误"), 
+                              self.获取文本("测试过程中出错").format(str(e)))
+            self.进度标签.config(text=self.获取文本("测试失败"))
+            import traceback
+            traceback.print_exc()
+    
+    def 生成整合测试报告(self, data, 
+                     有质量真实标签,
+                     质量准确率, 质量精确率, 质量召回率, 质量F1分数, 质量AUC,
+                     质量准确率_ci_lower, 质量准确率_ci_upper,
+                     mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                     y_true=None, 总体指标=None):
+        """生成整合的测试结果报告（Excel和Word）"""
+        try:
+            # 生成带时间戳的文件名
+            时间戳 = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            基础文件名 = f"整合测试报告_{时间戳}"
+            
+            # 1. 生成Excel报告（中英双语）
+            excel文件名 = f"{基础文件名}.xlsx"
+            self.生成Excel报告(excel文件名, data, 
+                            有质量真实标签, 质量准确率, 质量精确率, 质量召回率, 
+                            质量F1分数, 质量AUC, 质量准确率_ci_lower, 质量准确率_ci_upper,
+                            mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                            y_true, 总体指标)
+            
+            # 2. 生成Word报告（中英双语）
+            word文件名 = f"{基础文件名}.docx"
+            self.生成Word报告(word文件名, data, 
+                           有质量真实标签, 质量准确率, 质量精确率, 质量召回率, 
+                           质量F1分数, 质量AUC, 质量准确率_ci_lower, 质量准确率_ci_upper,
+                           mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                           y_true, 总体指标)
+            
+            print(f"整合报告已生成: {excel文件名}, {word文件名}")
+            return excel文件名
+            
+        except Exception as e:
+            print(f"生成整合测试报告失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def 生成Excel报告(self, 文件名, data, 
+                   有质量真实标签, 质量准确率, 质量精确率, 质量召回率, 
+                   质量F1分数, 质量AUC, 质量准确率_ci_lower, 质量准确率_ci_upper,
+                   mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                   y_true=None, 总体指标=None):
+        """生成Excel报告（中英双语）"""
+        try:
+            with pd.ExcelWriter(文件名, engine='openpyxl') as writer:
+                # ========== 中文版 ==========
+                # 1. 测试摘要
+                测试报告数据 = {
+                    '测试时间': [datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                    '总样本数': [len(data)],
+                    '高质量样本': [(data['质量预测'] == 1).sum()],
+                    '低质量样本': [(data['质量预测'] == 0).sum()],
+                    '空白反馈': [(data['处理文本'] == "").sum()],
+                    '质量阈值': [self.质量阈值滑动条.get() / 100.0],
+                    '使用模型': [self.最佳算法 if hasattr(self, '最佳算法') else "已加载模型"],
+                    '质量评价标准': ['6个特征中≥4个特征存在为高质量'],
+                    '质量平均预测概率': [mean_prob_q],
+                    '质量预测概率95%CI下限': [prob_ci_lower_q],
+                    '质量预测概率95%CI上限': [prob_ci_upper_q]
+                }
+                
+                if 总体指标:
+                    测试报告数据.update({
+                        '总体准确率': [总体指标['总体准确率']],
+                        '总体准确率95%CI下限': [总体指标['总体准确率_ci_lower']],
+                        '总体准确率95%CI上限': [总体指标['总体准确率_ci_upper']],
+                        '非空白反馈准确率': [总体指标['非空白反馈准确率']],
+                        '非空白反馈准确率95%CI下限': [总体指标['非空白反馈准确率_ci_lower']],
+                        '非空白反馈准确率95%CI上限': [总体指标['非空白反馈准确率_ci_upper']],
+                        '空白反馈准确率': [总体指标['空白反馈准确率']],
+                        '空白反馈准确率95%CI下限': [总体指标['空白反馈准确率_ci_lower']],
+                        '空白反馈准确率95%CI上限': [总体指标['空白反馈准确率_ci_upper']],
+                        '总体精确率': [总体指标['总体精确率']],
+                        '总体召回率': [总体指标['总体召回率']],
+                        '总体F1分数': [总体指标['总体F1分数']],
+                        '非空白样本数': [总体指标['非空白样本数']],
+                        '空白样本数': [总体指标['空白样本数']]
+                    })
+                
+                if 有质量真实标签 and 质量准确率 is not None:
+                    测试报告数据.update({
+                        '非空白反馈准确率': [质量准确率],
+                        '非空白反馈准确率95%CI下限': [质量准确率_ci_lower],
+                        '非空白反馈准确率95%CI上限': [质量准确率_ci_upper],
+                        '非空白反馈精确率': [质量精确率],
+                        '非空白反馈召回率': [质量召回率],
+                        '非空白反馈F1分数': [质量F1分数],
+                        '非空白反馈AUC': [质量AUC]
+                    })
+                
+                测试报告 = pd.DataFrame(测试报告数据)
+                测试报告.to_excel(writer, sheet_name='测试摘要_中文', index=False)
+                
+                # 2. 详细结果
+                输出列 = ['反馈文本', '处理文本', '质量标签', '质量概率']
+                data[输出列].to_excel(writer, sheet_name='详细结果_中文', index=False)
+                
+                # 3. 总体性能指标
+                if 总体指标:
+                    总体指标表 = pd.DataFrame({
+                        '指标': ['总体准确率', '非空白反馈准确率', '空白反馈准确率', 
+                               '总体精确率', '总体召回率', '总体F1分数'],
+                        '值': [总体指标['总体准确率'], 总体指标['非空白反馈准确率'], 
+                             总体指标['空白反馈准确率'], 总体指标['总体精确率'], 
+                             总体指标['总体召回率'], 总体指标['总体F1分数']],
+                        '95%置信区间下限': [
+                            总体指标['总体准确率_ci_lower'], 总体指标['非空白反馈准确率_ci_lower'],
+                            总体指标['空白反馈准确率_ci_lower'], 'N/A', 'N/A', 'N/A'
+                        ],
+                        '95%置信区间上限': [
+                            总体指标['总体准确率_ci_upper'], 总体指标['非空白反馈准确率_ci_upper'],
+                            总体指标['空白反馈准确率_ci_upper'], 'N/A', 'N/A', 'N/A'
+                        ],
+                        '说明': [
+                            '所有样本（包含空白和非空白）中正确分类的比例',
+                            '仅非空白反馈中正确分类的比例',
+                            '仅空白反馈中正确分类的比例',
+                            '预测为高质量中真正高质量的比例',
+                            '真正高质量中被正确识别的比例',
+                            '精确率和召回率的调和平均数'
+                        ]
+                    })
+                    总体指标表.to_excel(writer, sheet_name='总体性能指标_中文', index=False)
+                
+                # 4. 非空白反馈性能
+                if 有质量真实标签 and 质量准确率 is not None:
+                    性能指标 = pd.DataFrame({
+                        '指标': ['非空白反馈准确率', '非空白反馈精确率', '非空白反馈召回率', 
+                               '非空白反馈F1分数', '非空白反馈AUC'],
+                        '值': [质量准确率, 质量精确率, 质量召回率, 质量F1分数, 质量AUC],
+                        '95%置信区间下限': [质量准确率_ci_lower, 'N/A', 'N/A', 'N/A', 'N/A'],
+                        '95%置信区间上限': [质量准确率_ci_upper, 'N/A', 'N/A', 'N/A', 'N/A'],
+                        '说明': [
+                            '仅非空白反馈中正确分类的样本比例',
+                            '预测为高质量中真正高质量的比例',
+                            '真正高质量中被正确识别的比例',
+                            '精确率和召回率的调和平均数',
+                            '模型区分高质量和低质量反馈的能力'
+                        ]
+                    })
+                    性能指标.to_excel(writer, sheet_name='非空白反馈性能_中文', index=False)
+                    
+                    # 5. 混淆矩阵
+                    if y_true is not None:
+                        y_pred = data['质量预测'].values[~data['处理文本'].eq("")] if '处理文本' in data.columns else data['质量预测'].values
+                        cm = confusion_matrix(y_true, y_pred)
+                        cm_df = pd.DataFrame(cm, 
+                                           index=['实际低质量', '实际高质量'],
+                                           columns=['预测低质量', '预测高质量'])
+                        cm_df.to_excel(writer, sheet_name='混淆矩阵_中文')
+                
+                # 6. 高质量特征说明
+                特征说明 = pd.DataFrame({
+                    '标准特征名': list(self.可能特征列名.keys()),
+                    '说明': [
+                        '评价住培医师某一特定行为（非人格或特质）',
+                        '提供信息，描述观察到的情况或发生的行为（无论长短）',
+                        '指出住培医师的缺点或错误',
+                        '评价住培医师是否有专业性的计划、准备和/或沟通能力',
+                        '直接指出与住培医师具体行为相关的具体信息',
+                        '指出住培医师需要努力改进的具体领域'
+                    ]
+                })
+                特征说明.to_excel(writer, sheet_name='高质量特征说明_中文', index=False)
+                
+                # 7. 医院对比结果（如果有）
+                if self.医院对比结果 is not None:
+                    self.医院对比结果.to_excel(writer, sheet_name='医院间差异分析_中文', index=False)
+                
+                # ========== 英文版 ==========
+                # 1. Test Summary
+                测试报告数据_en = {
+                    'Test Time': [datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                    'Total Samples': [len(data)],
+                    'High Quality Samples': [(data['质量预测'] == 1).sum()],
+                    'Low Quality Samples': [(data['质量预测'] == 0).sum()],
+                    'Blank Feedback': [(data['处理文本'] == "").sum()],
+                    'Quality Threshold': [self.质量阈值滑动条.get() / 100.0],
+                    'Model Used': [self.最佳算法 if hasattr(self, '最佳算法') else "Loaded Model"],
+                    'Quality Evaluation Standard': ['≥4 features among 6 features are considered high-quality'],
+                    'Average Quality Prediction Probability': [mean_prob_q],
+                    '95% CI Lower (Quality Probability)': [prob_ci_lower_q],
+                    '95% CI Upper (Quality Probability)': [prob_ci_upper_q]
+                }
+                
+                if 总体指标:
+                    测试报告数据_en.update({
+                        'Overall Accuracy': [总体指标['总体准确率']],
+                        '95% CI Lower (Overall Accuracy)': [总体指标['总体准确率_ci_lower']],
+                        '95% CI Upper (Overall Accuracy)': [总体指标['总体准确率_ci_upper']],
+                        'Non-Blank Feedback Accuracy': [总体指标['非空白反馈准确率']],
+                        '95% CI Lower (Non-Blank Accuracy)': [总体指标['非空白反馈准确率_ci_lower']],
+                        '95% CI Upper (Non-Blank Accuracy)': [总体指标['非空白反馈准确率_ci_upper']],
+                        'Blank Feedback Accuracy': [总体指标['空白反馈准确率']],
+                        '95% CI Lower (Blank Accuracy)': [总体指标['空白反馈准确率_ci_lower']],
+                        '95% CI Upper (Blank Accuracy)': [总体指标['空白反馈准确率_ci_upper']],
+                        'Overall Precision': [总体指标['总体精确率']],
+                        'Overall Recall': [总体指标['总体召回率']],
+                        'Overall F1 Score': [总体指标['总体F1分数']],
+                        'Non-Blank Samples': [总体指标['非空白样本数']],
+                        'Blank Samples': [总体指标['空白样本数']]
+                    })
+                
+                if 有质量真实标签 and 质量准确率 is not None:
+                    测试报告数据_en.update({
+                        'Non-Blank Feedback Accuracy': [质量准确率],
+                        '95% CI Lower (Non-Blank Accuracy)': [质量准确率_ci_lower],
+                        '95% CI Upper (Non-Blank Accuracy)': [质量准确率_ci_upper],
+                        'Non-Blank Feedback Precision': [质量精确率],
+                        'Non-Blank Feedback Recall': [质量召回率],
+                        'Non-Blank Feedback F1 Score': [质量F1分数],
+                        'Non-Blank Feedback AUC': [质量AUC]
+                    })
+                
+                测试报告_en = pd.DataFrame(测试报告数据_en)
+                测试报告_en.to_excel(writer, sheet_name='Test Summary_EN', index=False)
+                
+                # 2. Detailed Results
+                data_en = data.copy()
+                data_en['质量标签'] = data_en['质量预测'].apply(lambda x: 'High Quality' if x == 1 else 'Low Quality')
+                data_en.loc[data['处理文本'] == "", '质量标签'] = 'Low Quality (Blank Feedback)'
+                
+                输出列_en = ['反馈文本', '处理文本', '质量标签', '质量概率']
+                data_en.rename(columns={
+                    '反馈文本': 'Feedback Text',
+                    '处理文本': 'Processed Text',
+                    '质量标签': 'Quality Label',
+                    '质量概率': 'Quality Probability'
+                })[['Feedback Text', 'Processed Text', 'Quality Label', 'Quality Probability']].to_excel(
+                    writer, sheet_name='Detailed Results_EN', index=False)
+                
+                # 3. Overall Performance Metrics
+                if 总体指标:
+                    总体指标表_en = pd.DataFrame({
+                        'Metric': ['Overall Accuracy', 'Non-Blank Feedback Accuracy', 'Blank Feedback Accuracy',
+                                  'Overall Precision', 'Overall Recall', 'Overall F1 Score'],
+                        'Value': [总体指标['总体准确率'], 总体指标['非空白反馈准确率'], 
+                                总体指标['空白反馈准确率'], 总体指标['总体精确率'], 
+                                总体指标['总体召回率'], 总体指标['总体F1分数']],
+                        '95% CI Lower': [
+                            总体指标['总体准确率_ci_lower'], 总体指标['非空白反馈准确率_ci_lower'],
+                            总体指标['空白反馈准确率_ci_lower'], 'N/A', 'N/A', 'N/A'
+                        ],
+                        '95% CI Upper': [
+                            总体指标['总体准确率_ci_upper'], 总体指标['非空白反馈准确率_ci_upper'],
+                            总体指标['空白反馈准确率_ci_upper'], 'N/A', 'N/A', 'N/A'
+                        ],
+                        'Description': [
+                            'Proportion of all samples (including blank and non-blank) correctly classified',
+                            'Proportion of only non-blank feedback correctly classified',
+                            'Proportion of only blank feedback correctly classified',
+                            'Proportion of true high quality among predicted high quality',
+                            'Proportion of true high quality correctly identified',
+                            'Harmonic mean of precision and recall'
+                        ]
+                    })
+                    总体指标表_en.to_excel(writer, sheet_name='Overall Performance_EN', index=False)
+                
+                # 4. Non-Blank Feedback Performance
+                if 有质量真实标签 and 质量准确率 is not None:
+                    性能指标_en = pd.DataFrame({
+                        'Metric': ['Non-Blank Feedback Accuracy', 'Non-Blank Feedback Precision', 
+                                  'Non-Blank Feedback Recall', 'Non-Blank Feedback F1 Score', 
+                                  'Non-Blank Feedback AUC'],
+                        'Value': [质量准确率, 质量精确率, 质量召回率, 质量F1分数, 质量AUC],
+                        '95% CI Lower': [质量准确率_ci_lower, 'N/A', 'N/A', 'N/A', 'N/A'],
+                        '95% CI Upper': [质量准确率_ci_upper, 'N/A', 'N/A', 'N/A', 'N/A'],
+                        'Description': [
+                            'Proportion of non-blank feedback samples correctly classified',
+                            'Proportion of true high quality among predicted high quality',
+                            'Proportion of true high quality correctly identified',
+                            'Harmonic mean of precision and recall',
+                            'Model ability to distinguish high and low quality feedback'
+                        ]
+                    })
+                    性能指标_en.to_excel(writer, sheet_name='Non-Blank Performance_EN', index=False)
+                    
+                    # 5. Confusion Matrix
+                    if y_true is not None:
+                        y_pred = data['质量预测'].values[~data['处理文本'].eq("")] if '处理文本' in data.columns else data['质量预测'].values
+                        cm = confusion_matrix(y_true, y_pred)
+                        cm_df_en = pd.DataFrame(cm, 
+                                              index=['Actual Low Quality', 'Actual High Quality'],
+                                              columns=['Predicted Low Quality', 'Predicted High Quality'])
+                        cm_df_en.to_excel(writer, sheet_name='Confusion Matrix_EN')
+                
+                # 6. High-Quality Feature Description
+                特征说明_en = pd.DataFrame({
+                    'Standard Feature Name': list(self.可能特征列名.keys()),
+                    'Description': [
+                        'Evaluate specific behaviors of resident physicians (not personality or traits)',
+                        'Provide information describing observed situations or behaviors (regardless of length)',
+                        'Point out deficiencies or errors of resident physicians',
+                        'Evaluate whether resident physicians have professional planning, preparation, and/or communication skills',
+                        'Directly point out specific information related to specific behaviors of resident physicians',
+                        'Point out specific areas where resident physicians need to improve'
+                    ]
+                })
+                特征说明_en.to_excel(writer, sheet_name='Feature Description_EN', index=False)
+                
+                # 7. Hospital Comparison (if available)
+                if self.医院对比结果 is not None:
+                    self.医院对比结果.rename(columns={
+                        '特征': 'Feature',
+                        'A医院（训练）': 'Hospital A (Training)',
+                        'B医院（测试）': 'Hospital B (Testing)',
+                        'P值': 'P-value'
+                    }).to_excel(writer, sheet_name='Hospital Comparison_EN', index=False)
+                
+            print(f"Excel报告已保存到: {文件名}")
+            return 文件名
+            
+        except Exception as e:
+            print(f"生成Excel报告失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def 生成Word报告(self, 文件名, data, 
+                  有质量真实标签, 质量准确率, 质量精确率, 质量召回率, 
+                  质量F1分数, 质量AUC, 质量准确率_ci_lower, 质量准确率_ci_upper,
+                  mean_prob_q, prob_ci_lower_q, prob_ci_upper_q,
+                  y_true=None, 总体指标=None):
+        """生成Word报告（中英双语）"""
+        try:
+            doc = Document()
+            
+            # ========== 中文部分 ==========
+            # 标题
+            title = doc.add_heading('麻醉科住培反馈质量分析报告', 0)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # 基本信息
+            doc.add_heading('一、测试基本信息', level=1)
+            p = doc.add_paragraph()
+            p.add_run(f'测试时间: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            doc.add_paragraph(f'总样本数: {len(data)}')
+            doc.add_paragraph(f'高质量样本: {(data["质量预测"] == 1).sum()}')
+            doc.add_paragraph(f'低质量样本: {(data["质量预测"] == 0).sum()}')
+            doc.add_paragraph(f'空白反馈: {(data["处理文本"] == "").sum()}')
+            doc.add_paragraph(f'质量阈值: {self.质量阈值滑动条.get() / 100.0}')
+            doc.add_paragraph(f'使用模型: {self.最佳算法 if hasattr(self, "最佳算法") else "已加载模型"}')
+            
+            # 质量评价标准
+            doc.add_heading('二、质量评价标准', level=1)
+            doc.add_paragraph('高质量反馈定义为包含以下6个特征中至少4个特征：')
+            features = [
+                '1. 以住培医师行为为中心的',
+                '2. 提供详细信息的',
+                '3. 负面反馈',
+                '4. 评价专业性和/或沟通能力的',
+                '5. 有针对性的',
+                '6. 指出可改进的'
+            ]
+            for feature in features:
+                doc.add_paragraph(feature, style='List Bullet')
+            
+            # 性能指标
+            doc.add_heading('三、性能指标', level=1)
+            
+            if 总体指标:
+                doc.add_paragraph('总体性能指标（包含空白和非空白反馈）：')
+                doc.add_paragraph(f'• 总体准确率: {总体指标["总体准确率"]:.3f} (95% CI: [{总体指标["总体准确率_ci_lower"]:.3f}, {总体指标["总体准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• 非空白反馈准确率: {总体指标["非空白反馈准确率"]:.3f} (95% CI: [{总体指标["非空白反馈准确率_ci_lower"]:.3f}, {总体指标["非空白反馈准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• 空白反馈准确率: {总体指标["空白反馈准确率"]:.3f} (95% CI: [{总体指标["空白反馈准确率_ci_lower"]:.3f}, {总体指标["空白反馈准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• 总体精确率: {总体指标["总体精确率"]:.3f}')
+                doc.add_paragraph(f'• 总体召回率: {总体指标["总体召回率"]:.3f}')
+                doc.add_paragraph(f'• 总体F1分数: {总体指标["总体F1分数"]:.3f}')
+            
+            if 有质量真实标签 and 质量准确率 is not None:
+                doc.add_paragraph('非空白反馈性能指标：')
+                doc.add_paragraph(f'• 准确率: {质量准确率:.3f} (95% CI: [{质量准确率_ci_lower:.3f}, {质量准确率_ci_upper:.3f}])')
+                doc.add_paragraph(f'• 精确率: {质量精确率:.3f}')
+                doc.add_paragraph(f'• 召回率: {质量召回率:.3f}')
+                doc.add_paragraph(f'• F1分数: {质量F1分数:.3f}')
+                doc.add_paragraph(f'• AUC: {质量AUC:.3f}')
+            
+            doc.add_paragraph(f'• 质量平均预测概率: {mean_prob_q:.3f} (95% CI: [{prob_ci_lower_q:.3f}, {prob_ci_upper_q:.3f}])')
+            
+            # 样本分布
+            doc.add_heading('四、样本分布', level=1)
+            if 总体指标:
+                doc.add_paragraph(f'• 非空白样本数: {总体指标["非空白样本数"]}')
+                doc.add_paragraph(f'• 空白样本数: {总体指标["空白样本数"]}')
+            
+            # 医院对比结果（如果有）
+            if self.医院对比结果 is not None:
+                doc.add_heading('五、医院间差异分析', level=1)
+                doc.add_paragraph('A医院（训练数据）与B医院（测试数据）的特征对比：')
+                
+                # 添加表格
+                table = doc.add_table(rows=1, cols=4)
+                table.style = 'Light Grid Accent 1'
+                
+                # 表头
+                hdr_cells = table.rows[0].cells
+                hdr_cells[0].text = '特征'
+                hdr_cells[1].text = 'A医院（训练）'
+                hdr_cells[2].text = 'B医院（测试）'
+                hdr_cells[3].text = 'P值'
+                
+                # 添加数据行
+                for _, row in self.医院对比结果.iterrows():
+                    row_cells = table.add_row().cells
+                    row_cells[0].text = str(row['特征'])
+                    row_cells[1].text = str(row['A医院（训练）'])
+                    row_cells[2].text = str(row['B医院（测试）'])
+                    row_cells[3].text = str(row['P值'])
+                
+                doc.add_paragraph('\n统计显著性说明：')
+                doc.add_paragraph('• P值 < 0.05：差异有统计学意义（显著差异）', style='List Bullet')
+                doc.add_paragraph('• P值 < 0.01：差异有高度统计学意义', style='List Bullet')
+                doc.add_paragraph('• P值 ≥ 0.05：差异无统计学意义', style='List Bullet')
+            
+            # 分页
+            doc.add_page_break()
+            
+            # ========== 英文部分 ==========
+            # 标题
+            title_en = doc.add_heading('Anesthesia Resident Feedback Quality Analysis Report', 0)
+            title_en.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            
+            # 基本信息
+            doc.add_heading('1. Basic Test Information', level=1)
+            p = doc.add_paragraph()
+            p.add_run(f'Test Time: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+            doc.add_paragraph(f'Total Samples: {len(data)}')
+            doc.add_paragraph(f'High Quality Samples: {(data["质量预测"] == 1).sum()}')
+            doc.add_paragraph(f'Low Quality Samples: {(data["质量预测"] == 0).sum()}')
+            doc.add_paragraph(f'Blank Feedback: {(data["处理文本"] == "").sum()}')
+            doc.add_paragraph(f'Quality Threshold: {self.质量阈值滑动条.get() / 100.0}')
+            doc.add_paragraph(f'Model Used: {self.最佳算法 if hasattr(self, "最佳算法") else "Loaded Model"}')
+            
+            # 质量评价标准
+            doc.add_heading('2. Quality Evaluation Standard', level=1)
+            doc.add_paragraph('High-quality feedback is defined as containing at least 4 of the following 6 features:')
+            features_en = [
+                '1. Behavior-focused',
+                '2. Provides detailed information',
+                '3. Negative feedback',
+                '4. Evaluates professionalism and/or communication skills',
+                '5. Targeted',
+                '6. Points out areas for improvement'
+            ]
+            for feature in features_en:
+                doc.add_paragraph(feature, style='List Bullet')
+            
+            # 性能指标
+            doc.add_heading('3. Performance Metrics', level=1)
+            
+            if 总体指标:
+                doc.add_paragraph('Overall Performance Metrics (including blank and non-blank feedback):')
+                doc.add_paragraph(f'• Overall Accuracy: {总体指标["总体准确率"]:.3f} (95% CI: [{总体指标["总体准确率_ci_lower"]:.3f}, {总体指标["总体准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• Non-Blank Feedback Accuracy: {总体指标["非空白反馈准确率"]:.3f} (95% CI: [{总体指标["非空白反馈准确率_ci_lower"]:.3f}, {总体指标["非空白反馈准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• Blank Feedback Accuracy: {总体指标["空白反馈准确率"]:.3f} (95% CI: [{总体指标["空白反馈准确率_ci_lower"]:.3f}, {总体指标["空白反馈准确率_ci_upper"]:.3f}])')
+                doc.add_paragraph(f'• Overall Precision: {总体指标["总体精确率"]:.3f}')
+                doc.add_paragraph(f'• Overall Recall: {总体指标["总体召回率"]:.3f}')
+                doc.add_paragraph(f'• Overall F1 Score: {总体指标["总体F1分数"]:.3f}')
+            
+            if 有质量真实标签 and 质量准确率 is not None:
+                doc.add_paragraph('Non-Blank Feedback Performance Metrics:')
+                doc.add_paragraph(f'• Accuracy: {质量准确率:.3f} (95% CI: [{质量准确率_ci_lower:.3f}, {质量准确率_ci_upper:.3f}])')
+                doc.add_paragraph(f'• Precision: {质量精确率:.3f}')
+                doc.add_paragraph(f'• Recall: {质量召回率:.3f}')
+                doc.add_paragraph(f'• F1 Score: {质量F1分数:.3f}')
+                doc.add_paragraph(f'• AUC: {质量AUC:.3f}')
+            
+            doc.add_paragraph(f'• Average Quality Prediction Probability: {mean_prob_q:.3f} (95% CI: [{prob_ci_lower_q:.3f}, {prob_ci_upper_q:.3f}])')
+            
+            # 样本分布
+            doc.add_heading('4. Sample Distribution', level=1)
+            if 总体指标:
+                doc.add_paragraph(f'• Non-Blank Samples: {总体指标["非空白样本数"]}')
+                doc.add_paragraph(f'• Blank Samples: {总体指标["空白样本数"]}')
+            
+            # 医院对比结果（如果有）
+            if self.医院对比结果 is not None:
+                doc.add_heading('5. Hospital Comparison Analysis', level=1)
+                doc.add_paragraph('Feature comparison between Hospital A (training data) and Hospital B (testing data):')
+                
+                # 添加表格
+                table_en = doc.add_table(rows=1, cols=4)
+                table_en.style = 'Light Grid Accent 1'
+                
+                # 表头
+                hdr_cells_en = table_en.rows[0].cells
+                hdr_cells_en[0].text = 'Feature'
+                hdr_cells_en[1].text = 'Hospital A (Training)'
+                hdr_cells_en[2].text = 'Hospital B (Testing)'
+                hdr_cells_en[3].text = 'P-value'
+                
+                # 添加数据行
+                for _, row in self.医院对比结果.iterrows():
+                    row_cells_en = table_en.add_row().cells
+                    row_cells_en[0].text = str(row['特征'])
+                    row_cells_en[1].text = str(row['A医院（训练）'])
+                    row_cells_en[2].text = str(row['B医院（测试）'])
+                    row_cells_en[3].text = str(row['P值'])
+                
+                doc.add_paragraph('\nStatistical Significance Explanation:')
+                doc.add_paragraph('• P-value < 0.05: Statistically significant difference', style='List Bullet')
+                doc.add_paragraph('• P-value < 0.01: Highly statistically significant difference', style='List Bullet')
+                doc.add_paragraph('• P-value ≥ 0.05: No statistically significant difference', style='List Bullet')
+            
+            # 保存文档
+            doc.save(文件名)
+            print(f"Word报告已保存到: {文件名}")
+            return 文件名
+            
+        except Exception as e:
+            print(f"生成Word报告失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def 显示分析结果(self, data):
+        """显示分析结果"""
+        # 清空结果框
+        for item in self.分析结果树.get_children():
+            self.分析结果树.delete(item)
+        
+        # 添加结果
+        for idx, row in data.iterrows():
+            反馈文本 = str(row['反馈文本'])
+            显示文本 = 反馈文本[:80] + "..." if len(反馈文本) > 80 else 反馈文本
+            
+            # 如果是空白反馈，特殊标记
+            if row['处理文本'] == "":
+                显示文本 = "[空白反馈] " + 显示文本
+            
+            self.分析结果树.insert("", "end", values=(
+                idx + 1,
+                显示文本,
+                row['质量标签'],
+                f"{row['质量概率']:.3f}"
+            ))
+    
+    def 显示高质量特征说明(self):
+        """显示高质量特征说明窗口"""
+        说明窗口 = tk.Toplevel(self.root)
+        说明窗口.title(self.获取文本("高质量反馈特征说明"))
+        说明窗口.geometry("600x400")
+        
+        # 创建文本框和滚动条
+        文本框 = tk.Text(说明窗口, wrap=tk.WORD, font=("宋体", 10))
+        滚动条 = ttk.Scrollbar(说明窗口, orient=tk.VERTICAL, command=文本框.yview)
+        文本框.configure(yscrollcommand=滚动条.set)
+        
+        文本框.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+        滚动条.pack(side=tk.RIGHT, fill=tk.Y, pady=10)
+        
+        # 添加说明内容
+        说明内容 = f"""{self.获取文本("高质量反馈特征说明")}：\n
+{self.获取文本("特征1标题")}
+   - {self.获取文本("特征1内容")}\n
+{self.获取文本("特征2标题")}
+   - {self.获取文本("特征2内容")}\n
+{self.获取文本("特征3标题")}
+   - {self.获取文本("特征3内容")}\n
+{self.获取文本("特征4标题")}
+   - {self.获取文本("特征4内容")}\n
+{self.获取文本("特征5标题")}
+   - {self.获取文本("特征5内容")}\n
+{self.获取文本("特征6标题")}
+   - {self.获取文本("特征6内容")}\n
+{self.获取文本("质量评价标准")}
+- {self.获取文本("标准内容")}\n
+{self.获取文本("示例分析")}
+{self.获取文本("示例文本")}
+- {self.获取文本("示例特征")}
+- {self.获取文本("示例质量")}
+"""
+        
+        文本框.insert(tk.END, 说明内容)
+        文本框.config(state=tk.DISABLED)  # 设为只读
+    
+    def 添加词汇界面(self):
+        """打开添加专业词汇的界面"""
+        词汇窗口 = tk.Toplevel(self.root)
+        词汇窗口.title(self.获取文本("添加麻醉专业词汇"))
+        词汇窗口.geometry("400x300")
+        
+        tk.Label(词汇窗口, text=self.获取文本("输入词汇提示")).pack(pady=10)
+        
+        词汇文本框 = tk.Text(词汇窗口, height=10, width=40)
+        词汇文本框.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+        
+        def 添加词汇():
+            词汇列表 = 词汇文本框.get("1.0", tk.END).strip().split('\n')
+            词汇列表 = [word.strip() for word in 词汇列表 if word.strip()]
+            
+            if 词汇列表:
+                if self.添加专业词汇(词汇列表):
+                    messagebox.showinfo(self.获取文本("成功"), 
+                                     self.获取文本("成功添加词汇").format(len(词汇列表)))
+                    词汇窗口.destroy()
+                else:
+                    messagebox.showerror(self.获取文本("错误"), self.获取文本("添加词汇失败"))
+            else:
+                messagebox.showwarning(self.获取文本("警告"), self.获取文本("请输入要添加的词汇"))
+        
+        tk.Button(词汇窗口, text=self.获取文本("添加专业词汇"), command=添加词汇).pack(pady=10)
+    
+    def 执行医院间差异分析(self, 测试数据, 测试医院名称):
+        """执行A医院（训练）与B医院（测试）的差异分析"""
+        try:
+            if not hasattr(self, '非空白数据'):
+                print("没有训练数据可用于医院对比分析")
+                return
+            
+            # 获取A医院数据（训练数据）
+            医院A数据 = self.预处理数据.copy()
+            
+            # 获取B医院数据（测试数据）
+            医院B数据 = 测试数据.copy()
+            
+            print(f"开始医院间差异分析: A医院({len(医院A数据)}条) vs B医院({len(医院B数据)}条)")
+            
+            # 计算A医院特征
+            self.进度标签.config(text=self.获取文本("正在计算医院间差异"))
+            self.root.update()
+            
+            医院A特征 = self.计算医院数据特征(医院A数据, "A医院（训练）")
+            医院B特征 = self.计算医院数据特征(医院B数据, 测试医院名称)
+            
+            # 计算差异P值
+            差异结果 = self.计算医院间差异P值(医院A数据, 医院B数据)
+            
+            # 创建对比表格
+            对比数据 = []
+            for key in 医院A特征.keys():
+                if key == '医院':
+                    continue
+                a_value = 医院A特征.get(key, 'N/A')
+                b_value = 医院B特征.get(key, 'N/A')
+                
+                # 找到对应的P值
+                p_value = 'N/A'
+                for item in 差异结果:
+                    if key.replace('(%)', '').replace('(字符)', '').strip() in item[0]:
+                        p_value = f"{item[2]:.4f}"
+                        break
+                
+                对比数据.append({
+                    '特征': key,
+                    'A医院（训练）': a_value,
+                    'B医院（测试）': b_value,
+                    'P值': p_value
+                })
+            
+            self.医院对比结果 = pd.DataFrame(对比数据)
+            
+            # 显示差异分析结果
+            self.显示医院对比结果()
+            
+            # 保存医院对比结果
+            self.保存医院对比结果()
+            
+        except Exception as e:
+            print(f"医院间差异分析失败: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def 显示医院对比结果(self):
+        """显示医院对比分析结果"""
+        if self.医院对比结果 is None:
+            return
+        
+        # 创建新窗口显示医院对比结果
+        对比窗口 = tk.Toplevel(self.root)
+        对比窗口.title(self.获取文本("医院对比"))
+        对比窗口.geometry("700x400")
+        
+        # 创建标签框架
+        对比帧 = ttk.LabelFrame(对比窗口, text="A医院（训练） vs B医院（测试）特征对比")
+        对比帧.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 创建表格
+        columns = (self.获取文本("特征"), self.获取文本("A医院"), self.获取文本("B医院"), self.获取文本("P值"))
+        对比树 = ttk.Treeview(对比帧, columns=columns, show="headings", height=10)
+        
+        column_widths = {
+            self.获取文本("特征"): 150,
+            self.获取文本("A医院"): 120,
+            self.获取文本("B医院"): 120,
+            self.获取文本("P值"): 80
+        }
+        
+        for col in columns:
+            对比树.heading(col, text=col)
+            对比树.column(col, width=column_widths.get(col, 100))
+        
+        # 添加数据
+        for _, row in self.医院对比结果.iterrows():
+            对比树.insert("", "end", values=(
+                row['特征'],
+                row['A医院（训练）'],
+                row['B医院（测试）'],
+                row['P值']
+            ))
+        
+        # 滚动条
+        滚动条 = ttk.Scrollbar(对比帧, orient=tk.VERTICAL, command=对比树.yview)
+        对比树.configure(yscrollcommand=滚动条.set)
+        
+        对比树.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        滚动条.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 添加统计解释
+        解释文本 = tk.Text(对比窗口, height=5, wrap=tk.WORD, font=("宋体", 9))
+        解释文本.pack(fill=tk.X, padx=10, pady=5)
+        
+        解释内容 = f"""{self.获取文本("统计显著性说明")}
+{self.获取文本("统计说明1")}
+{self.获取文本("统计说明2")}
+{self.获取文本("统计说明3")}
+{self.获取文本("统计说明4")}"""
+        
+        解释文本.insert(tk.END, 解释内容)
+        解释文本.config(state=tk.DISABLED)
+    
+    def 保存医院对比结果(self):
+        """保存医院对比结果到Excel文件"""
+        try:
+            if self.医院对比结果 is not None:
+                # 生成带时间戳的文件名
+                时间戳 = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                文件名 = f"医院间差异分析_{时间戳}.xlsx"
+                
+                with pd.ExcelWriter(文件名, engine='openpyxl') as writer:
+                    self.医院对比结果.to_excel(writer, sheet_name='特征对比', index=False)
+                    
+                    # 添加统计方法说明
+                    方法说明 = pd.DataFrame({
+                        '特征': ['平均反馈长度', '专业词汇密度', '空白反馈比例', '高质量比例'],
+                        '统计方法': ['独立样本t检验（检查方差齐性后）', 
+                                  'Mann-Whitney U检验（非参数）', 
+                                  '卡方检验', 
+                                  '卡方检验'],
+                        '显著性水平': ['α=0.05', 'α=0.05', 'α=0.05', 'α=0.05'],
+                        '备注': ['连续变量，使用参数检验', 
+                               '比例数据，使用非参数检验', 
+                               '分类变量，使用卡方检验',
+                               '分类变量，使用卡方检验']
+                    })
+                    方法说明.to_excel(writer, sheet_name='统计方法', index=False)
+                
+                print(f"医院对比结果已保存到: {文件名}")
+                return 文件名
+            else:
+                print("没有医院对比结果可保存")
+                return None
+        except Exception as e:
+            print(f"保存医院对比结果失败: {e}")
+            return None
+    
+    def 创建界面(self):
+        """创建主界面"""
+        # 主框架
+        主框架 = ttk.Frame(self.root)
+        主框架.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 语言选择框架
+        语言帧 = ttk.Frame(主框架)
+        语言帧.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(语言帧, text=self.获取文本("语言选择")).pack(side=tk.LEFT, padx=5)
+        
+        # 语言选择下拉菜单
+        self.语言变量 = tk.StringVar(value=self.当前语言)
+        语言选择框 = ttk.Combobox(语言帧, textvariable=self.语言变量, 
+                                 values=["中文", "英文"], state="readonly", width=10)
+        语言选择框.pack(side=tk.LEFT, padx=5)
+        语言选择框.bind("<<ComboboxSelected>>", lambda e: self.切换语言(self.语言变量.get()))
+        
+        # 顶部按钮框架
+        顶部按钮帧 = ttk.Frame(主框架)
+        顶部按钮帧.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(顶部按钮帧, text=self.获取文本("数据预处理"), command=self.数据预处理).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("训练测试数据"), command=self.训练测试数据).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("保存模型"), command=self.保存模型).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("加载模型"), command=self.加载模型).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("测试新数据"), command=self.测试新数据).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("添加专业词汇"), command=self.添加词汇界面).pack(side=tk.LEFT, padx=5)
+        ttk.Button(顶部按钮帧, text=self.获取文本("特征说明"), command=self.显示高质量特征说明).pack(side=tk.LEFT, padx=5)
+        
+        # 阈值和状态框架
+        状态帧 = ttk.Frame(主框架)
+        状态帧.pack(fill=tk.X, pady=5)
+        
+        # 阈值调整
+        阈值帧 = ttk.LabelFrame(状态帧, text=self.获取文本("分类阈值调整"))
+        阈值帧.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        
+        # 修复：使用单独的标签变量
+        self.质量阈值标签 = ttk.Label(阈值帧, text=self.获取文本("质量阈值"))
+        self.质量阈值标签.grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
+        
+        self.质量阈值滑动条 = tk.Scale(阈值帧, from_=10, to_=90, orient=tk.HORIZONTAL, length=150)
+        self.质量阈值滑动条.set(50)
+        self.质量阈值滑动条.grid(row=0, column=1, padx=5, pady=5)
+        
+        # 阈值说明
+        阈值说明 = ttk.Label(阈值帧, text=self.获取文本("Recommended: use automatically found optimal threshold"), 
+                           foreground="gray", font=("Arial", 8))
+        阈值说明.grid(row=1, column=0, columnspan=2, padx=5, pady=2, sticky=tk.W)
+        
+        # 模型状态信息
+        模型状态帧 = ttk.LabelFrame(状态帧, text=self.获取文本("模型状态"))
+        模型状态帧.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+        
+        self.稳定性标签 = ttk.Label(模型状态帧, text=self.获取文本("未训练"), foreground="blue")
+        self.稳定性标签.pack(pady=2)
+        
+        self.过拟合标签 = ttk.Label(模型状态帧, text="", font=("Arial", 9))
+        self.过拟合标签.pack(pady=2)
+        
+        # 进度和统计标签
+        self.进度标签 = ttk.Label(主框架, text=self.获取文本("准备就绪"))
+        self.进度标签.pack(pady=2)
+        
+        self.统计标签 = ttk.Label(主框架, text="", foreground="blue")
+        self.统计标签.pack(pady=2)
+        
+        # 训练结果框架
+        训练结果帧 = ttk.LabelFrame(主框架, text=self.获取文本("模型性能比较"))
+        训练结果帧.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # 训练结果树状图
+        columns = (self.获取文本("算法"), "AUC", self.获取文本("测试准确率"), 
+                  self.获取文本("交叉验证准确率"), self.获取文本("精确率"), 
+                  self.获取文本("召回率"), "F1分数", self.获取文本("最佳阈值"))
+        self.结果树 = ttk.Treeview(训练结果帧, columns=columns, show="headings", height=6)
+        
+        column_widths = {
+            self.获取文本("算法"): 80,
+            "AUC": 60,
+            self.获取文本("测试准确率"): 80,
+            self.获取文本("交叉验证准确率"): 100,
+            self.获取文本("精确率"): 60,
+            self.获取文本("召回率"): 60,
+            "F1分数": 60,
+            self.获取文本("最佳阈值"): 70
+        }
+        
+        for col in columns:
+            self.结果树.heading(col, text=col)
+            self.结果树.column(col, width=column_widths.get(col, 80), minwidth=60)
+        
+        # 滚动条
+        滚动条 = ttk.Scrollbar(训练结果帧, orient=tk.VERTICAL, command=self.结果树.yview)
+        self.结果树.configure(yscrollcommand=滚动条.set)
+        
+        self.结果树.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        滚动条.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 分析结果框架
+        分析结果帧 = ttk.LabelFrame(主框架, text=self.获取文本("详细分析结果"))
+        分析结果帧.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # 分析结果树状图
+        columns = (self.获取文本("序号"), self.获取文本("反馈文本"), 
+                  self.获取文本("质量预测"), self.获取文本("质量概率"))
+        self.分析结果树 = ttk.Treeview(分析结果帧, columns=columns, show="headings", height=12)
+        
+        column_widths = {
+            self.获取文本("序号"): 50,
+            self.获取文本("反馈文本"): 500,
+            self.获取文本("质量预测"): 100,
+            self.获取文本("质量概率"): 100
+        }
+        
+        for col in columns:
+            self.分析结果树.heading(col, text=col)
+            self.分析结果树.column(col, width=column_widths.get(col, 100))
+        
+        # 滚动条
+        分析滚动条 = ttk.Scrollbar(分析结果帧, orient=tk.VERTICAL, command=self.分析结果树.yview)
+        self.分析结果树.configure(yscrollcommand=分析滚动条.set)
+        
+        self.分析结果树.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        分析滚动条.pack(side=tk.RIGHT, fill=tk.Y)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = 麻醉反馈质量分析系统(root)
+    root.mainloop()
